@@ -116,8 +116,7 @@ def benchmark_correctness() -> bool:
     Y_jax = ishigami_evaluate(jnp.asarray(sr.samples))
     Y_np = np.asarray(Y_jax)
 
-    key = jax.random.key(0)
-    gsax_result = gsax.analyze(sr, Y_jax, key=key, num_resamples=100, conf_level=0.95)
+    gsax_result = gsax.analyze(sr, Y_jax)
 
     salib_problem = gsax_problem_to_salib(ISHIGAMI_PROBLEM)
     salib_result = salib_sobol.analyze(
@@ -168,7 +167,7 @@ def benchmark_timing(base_n: int = 4096, n_repeats: int = 3) -> None:
     print("\nWarming up gsax JIT ...", end=" ", flush=True)
     sr_w = gsax.sample(BENCH_PROBLEM, n_total, seed=0, calc_second_order=True)
     Y_w = coupled_oscillators(jnp.asarray(sr_w.samples))
-    r_w = gsax.analyze(sr_w, Y_w, key=jax.random.key(99), num_resamples=100)
+    r_w = gsax.analyze(sr_w, Y_w)
     jax.block_until_ready(r_w.S1)
     jax.block_until_ready(r_w.ST)
     jax.block_until_ready(r_w.S2)
@@ -186,7 +185,7 @@ def benchmark_timing(base_n: int = 4096, n_repeats: int = 3) -> None:
         Y = coupled_oscillators(jnp.asarray(sr.samples))
         jax.block_until_ready(Y)
         t2 = time.perf_counter()
-        result = gsax.analyze(sr, Y, key=jax.random.key(i), num_resamples=100)
+        result = gsax.analyze(sr, Y)
         jax.block_until_ready(result.S1)
         jax.block_until_ready(result.ST)
         jax.block_until_ready(result.S2)

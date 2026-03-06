@@ -12,7 +12,7 @@ class SAResult:
     """Sobol sensitivity analysis results.
 
     Stores first-order (S1), total-order (ST), and optionally second-order (S2)
-    Sobol indices together with their bootstrap confidence intervals.
+    Sobol indices.
 
     Shapes follow the convention ``(T, K, D)`` for time-resolved analyses or
     ``(K, D)`` when the time dimension is squeezed, where *K* is the number of
@@ -20,11 +20,8 @@ class SAResult:
     """
 
     S1: Array  # (T, K, D) or (K, D) if time squeezed
-    S1_conf: Array
     ST: Array
-    ST_conf: Array
     S2: Array | None  # (T, K, D, D) or (K, D, D), None if not computed
-    S2_conf: Array | None
     problem: Problem
 
     def __repr__(self) -> str:

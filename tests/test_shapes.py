@@ -13,7 +13,7 @@ def test_2d_input_shape():
     Y = jnp.ones((sr.n_total, K))
     # Add some variation so variance isn't zero
     Y = Y + jax.random.normal(jax.random.key(1), (sr.n_total, K))
-    result = gsax.analyze(sr, Y, key=jax.random.key(0), num_resamples=10)
+    result = gsax.analyze(sr, Y)
     assert result.S1.shape == (K, p.num_vars)
     assert result.ST.shape == (K, p.num_vars)
     assert result.S2.shape == (K, p.num_vars, p.num_vars)
@@ -25,7 +25,7 @@ def test_3d_input_shape():
     sr = gsax.sample(p, n_samples=256, seed=42)
     T, K = 2, 3
     Y = jax.random.normal(jax.random.key(1), (sr.n_total, T, K))
-    result = gsax.analyze(sr, Y, key=jax.random.key(0), num_resamples=10)
+    result = gsax.analyze(sr, Y)
     assert result.S1.shape == (T, K, p.num_vars)
     assert result.ST.shape == (T, K, p.num_vars)
     assert result.S2.shape == (T, K, p.num_vars, p.num_vars)
@@ -36,7 +36,7 @@ def test_1d_input_shape():
     p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
     sr = gsax.sample(p, n_samples=256, seed=42)
     Y = jax.random.normal(jax.random.key(1), (sr.n_total,))
-    result = gsax.analyze(sr, Y, key=jax.random.key(0), num_resamples=10)
+    result = gsax.analyze(sr, Y)
     assert result.S1.shape == (p.num_vars,)
     assert result.ST.shape == (p.num_vars,)
     assert result.S2.shape == (p.num_vars, p.num_vars)
@@ -47,7 +47,7 @@ def test_single_param():
     p = Problem.from_dict({"x1": (0.0, 1.0)})
     sr = gsax.sample(p, n_samples=256, calc_second_order=False, seed=42)
     Y = jax.random.normal(jax.random.key(1), (sr.n_total,))
-    result = gsax.analyze(sr, Y, key=jax.random.key(0), num_resamples=10)
+    result = gsax.analyze(sr, Y)
     assert result.S1.shape == (p.num_vars,)
     assert result.ST.shape == (p.num_vars,)
     assert result.S2 is None
@@ -58,6 +58,6 @@ def test_single_output():
     p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
     sr = gsax.sample(p, n_samples=256, seed=42)
     Y = jax.random.normal(jax.random.key(1), (sr.n_total, 1))
-    result = gsax.analyze(sr, Y, key=jax.random.key(0), num_resamples=10)
+    result = gsax.analyze(sr, Y)
     assert result.S1.shape == (1, p.num_vars)
     assert result.ST.shape == (1, p.num_vars)

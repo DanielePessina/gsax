@@ -2,13 +2,13 @@
 
 **Global Sensitivity Analysis in JAX**
 
-`gsax` computes Sobol variance-based sensitivity indices entirely in JAX, giving you automatic differentiation, GPU/TPU acceleration, and JIT compilation for free. It implements Saltelli's sampling scheme with Sobol quasi-random sequences and supports first-order, total-order, and second-order indices with bootstrap confidence intervals.
+`gsax` computes Sobol variance-based sensitivity indices entirely in JAX, giving you GPU/TPU acceleration and JIT compilation for free. It implements Saltelli's sampling scheme with Sobol quasi-random sequences and supports first-order, total-order, and second-order indices with chunked vectorization for bounded memory usage.
 
 ## Features
 
 - Saltelli sampling via Sobol quasi-random sequences (powered by `scipy.stats.qmc`)
 - First-order (S1), total-order (ST), and second-order (S2) Sobol indices
-- Bootstrap confidence intervals computed with vectorized JAX operations
+- Chunked `jit(vmap(...))` execution for bounded memory on large output grids
 - Supports scalar, multi-output, and time-series model outputs
 - Built-in Ishigami benchmark function with known analytical solutions
 
@@ -29,7 +29,6 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```python
-import jax
 import gsax
 from gsax.benchmarks.ishigami import PROBLEM, evaluate
 
@@ -40,7 +39,7 @@ sampling_result = gsax.sample(PROBLEM, n_samples=4096, seed=42)
 Y = evaluate(sampling_result.samples)
 
 # 3. Compute Sobol indices
-result = gsax.analyze(sampling_result, Y, key=jax.random.key(0))
+result = gsax.analyze(sampling_result, Y)
 
 print("First-order indices (S1):", result.S1)
 print("Total-order indices (ST):", result.ST)
@@ -96,8 +95,6 @@ sampling_result = gsax.sample(
 ### Analyze results
 
 ```python
-import jax
-
 # Y can be:
 #   - (n_total,)       scalar output
 #   - (n_total, K)     multi-output (K outputs)
@@ -107,14 +104,11 @@ Y = my_model(sampling_result.samples)
 result = gsax.analyze(
     sampling_result,
     Y,
-    key=jax.random.key(0),
-    num_resamples=100,   # bootstrap resamples (default)
-    conf_level=0.95,     # confidence level (default)
+    chunk_size=64,  # optional: limit vmap batch size for memory control
 )
 
-# result.S1, result.ST      — sensitivity indices
-# result.S1_conf, result.ST_conf — bootstrap confidence half-widths
-# result.S2, result.S2_conf — second-order (None if not computed)
+# result.S1, result.ST — sensitivity indices
+# result.S2            — second-order interactions (None if not computed)
 ```
 
 ### Multi-output models
@@ -130,7 +124,7 @@ def multi_output_model(X):
     return jnp.column_stack([y1, y2])
 
 Y = multi_output_model(sampling_result.samples)
-result = gsax.analyze(sampling_result, Y, key=jax.random.key(0))
+result = gsax.analyze(sampling_result, Y)
 # result.S1.shape == (2, 3)  — 2 outputs, 3 parameters
 ```
 
