@@ -44,7 +44,8 @@ def _count_and_report_nans(
         "ST": int(jnp.sum(jnp.isnan(ST))),
     }
     if S2 is not None:
-        counts["S2"] = int(jnp.sum(jnp.isnan(S2)))
+        off_diag_mask = ~jnp.eye(S2.shape[-1], dtype=bool)
+        counts["S2"] = int(jnp.sum(jnp.isnan(S2) & off_diag_mask))
     total = sum(counts.values())
     if total > 0:
         parts = ", ".join(f"{k}: {v}" for k, v in counts.items())
@@ -113,6 +114,15 @@ def _kernel_second_order(
 
     S2 = vmap(s2_row)(jnp.arange(D))  # (D, D)
     return S1, ST, S2
+
+
+def _normalize_s2_matrix(S2: Array) -> Array:
+    """Mirror the upper triangle to the lower and mark the diagonal undefined."""
+    D = S2.shape[-1]
+    upper = jnp.triu(S2, k=1)
+    mirrored = upper + jnp.swapaxes(upper, -1, -2)
+    diag_mask = jnp.eye(D, dtype=bool)
+    return jnp.where(diag_mask, jnp.nan, mirrored)
 
 
 def _prepare_Y(
@@ -201,7 +211,9 @@ def _analyze_no_bootstrap(
 
         S1_out = jnp.concatenate(s1_parts).reshape(T, K, D)
         ST_out = jnp.concatenate(st_parts).reshape(T, K, D)
-        S2_out = jnp.concatenate(s2_parts).reshape(T, K, D, D)
+        S2_out = _normalize_s2_matrix(
+            jnp.concatenate(s2_parts).reshape(T, K, D, D)
+        )
     else:
         batched = jax.jit(jax.vmap(_kernel_first_total, in_axes=(0, 0, 0)))
 
@@ -313,11 +325,13 @@ def _analyze_bootstrap(
     ])
 
     if calc_second_order:
-        S2_out = jnp.stack(S2_list).reshape(T, K, D, D)
-        S2_conf = jnp.stack([
-            jnp.stack(S2_lo_list).reshape(T, K, D, D),
-            jnp.stack(S2_hi_list).reshape(T, K, D, D),
-        ])
+        S2_out = _normalize_s2_matrix(jnp.stack(S2_list).reshape(T, K, D, D))
+        S2_conf = _normalize_s2_matrix(
+            jnp.stack([
+                jnp.stack(S2_lo_list).reshape(T, K, D, D),
+                jnp.stack(S2_hi_list).reshape(T, K, D, D),
+            ])
+        )
     else:
         S2_out = None
         S2_conf = None

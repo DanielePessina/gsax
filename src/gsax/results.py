@@ -18,13 +18,18 @@ class SAResult:
     ``(K, D)`` when the time dimension is squeezed, where *K* is the number of
     outputs and *D* the number of parameters.
 
+    ``S2`` is stored as a symmetric ``(..., D, D)`` matrix. Only the upper
+    triangle is estimated directly; the lower triangle mirrors it for
+    convenience, and the diagonal is undefined and therefore set to ``NaN``.
+
     Confidence interval arrays (``*_conf``) have an extra leading dimension of
-    size 2 representing ``[lower, upper]`` bounds.
+    size 2 representing ``[lower, upper]`` bounds. ``S2_conf`` follows the same
+    symmetric-with-``NaN``-diagonal contract as ``S2``.
     """
 
     S1: Array  # (T, K, D) or (K, D) if time squeezed
     ST: Array
-    S2: Array | None  # (T, K, D, D) or (K, D, D), None if not computed
+    S2: Array | None  # (..., D, D), symmetric, diagonal NaN, None if not computed
     problem: Problem
     S1_conf: Array | None = None  # (2, T, K, D) or squeezed; [lower, upper]
     ST_conf: Array | None = None
