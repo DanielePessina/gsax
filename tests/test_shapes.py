@@ -61,3 +61,65 @@ def test_single_output():
     result = gsax.analyze(sr, Y)
     assert result.S1.shape == (1, p.num_vars)
     assert result.ST.shape == (1, p.num_vars)
+
+
+# --- Bootstrap shape tests ---
+
+
+def _bootstrap_result(Y_shape_suffix, calc_second_order=True):
+    """Helper: sample, generate Y, run bootstrap analyze."""
+    p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
+    sr = gsax.sample(p, n_samples=256, seed=42, calc_second_order=calc_second_order)
+    Y = jax.random.normal(jax.random.key(1), (sr.n_total, *Y_shape_suffix))
+    return gsax.analyze(sr, Y, num_resamples=50, key=jax.random.key(99)), p
+
+
+def test_bootstrap_1d_shape():
+    """1D Y with bootstrap should have (2, D) conf shapes."""
+    result, p = _bootstrap_result(())
+    D = p.num_vars
+    assert result.S1.shape == (D,)
+    assert result.S1_conf.shape == (2, D)
+    assert result.ST_conf.shape == (2, D)
+    assert result.S2_conf.shape == (2, D, D)
+
+
+def test_bootstrap_2d_shape():
+    """2D Y (n_total, K) with bootstrap should have (2, K, D) conf shapes."""
+    result, p = _bootstrap_result((3,))
+    D = p.num_vars
+    assert result.S1.shape == (3, D)
+    assert result.S1_conf.shape == (2, 3, D)
+    assert result.ST_conf.shape == (2, 3, D)
+    assert result.S2_conf.shape == (2, 3, D, D)
+
+
+def test_bootstrap_3d_shape():
+    """3D Y (n_total, T, K) with bootstrap should have (2, T, K, D) conf shapes."""
+    result, p = _bootstrap_result((2, 3))
+    D = p.num_vars
+    assert result.S1.shape == (2, 3, D)
+    assert result.S1_conf.shape == (2, 2, 3, D)
+    assert result.ST_conf.shape == (2, 2, 3, D)
+    assert result.S2_conf.shape == (2, 2, 3, D, D)
+
+
+def test_no_bootstrap_conf_is_none():
+    """Without bootstrap, _conf fields should be None."""
+    p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
+    sr = gsax.sample(p, n_samples=256, seed=42)
+    Y = jax.random.normal(jax.random.key(1), (sr.n_total,))
+    result = gsax.analyze(sr, Y)
+    assert result.S1_conf is None
+    assert result.ST_conf is None
+    assert result.S2_conf is None
+
+
+def test_bootstrap_no_second_order_shape():
+    """Bootstrap without second order: S2_conf should be None."""
+    result, p = _bootstrap_result((), calc_second_order=False)
+    D = p.num_vars
+    assert result.S1_conf.shape == (2, D)
+    assert result.ST_conf.shape == (2, D)
+    assert result.S2 is None
+    assert result.S2_conf is None
