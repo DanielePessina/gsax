@@ -76,7 +76,7 @@ def analyze(
     sampling_result: SamplingResult,
     Y: Array,
     *,
-    chunk_size: int | None = None,
+    chunk_size: int = 2048,
 ) -> SAResult:
     """Compute Sobol sensitivity indices using JAX.
 
@@ -84,7 +84,7 @@ def analyze(
         sampling_result: Result from gsax.sample().
         Y: Model outputs. Shape (n_total,), (n_total, K), or (n_total, T, K).
         chunk_size: Number of (T, K) output combinations to process per
-            vmap batch.  ``None`` (default) processes all at once.
+            vmap batch.  Defaults to 2048.
 
     Returns:
         SAResult with S1, ST, and optionally S2.
@@ -121,9 +121,9 @@ def analyze(
     AB_flat = AB.transpose(2, 3, 0, 1).reshape(T * K, base_n, D)
 
     total = T * K
-    if chunk_size is not None and chunk_size < 1:
+    if chunk_size < 1:
         raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
-    cs = total if chunk_size is None else chunk_size
+    cs = min(chunk_size, total)
 
     if calc_second_order:
         assert BA is not None
