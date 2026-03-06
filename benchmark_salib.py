@@ -253,6 +253,90 @@ def benchmark_timing(base_n: int = 256, n_repeats: int = 3) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Bootstrap benchmark
+# ---------------------------------------------------------------------------
+
+
+def benchmark_bootstrap_timing(
+    base_n: int = 256, num_resamples: int = 100, n_repeats: int = 3
+) -> None:
+    D = D_PARAMS
+    step = 2 * D + 2
+    n_total = base_n * step
+    salib_problem = gsax_problem_to_salib(BENCH_PROBLEM)
+
+    print(f"\n{'=' * 70}")
+    print("BOOTSTRAP BENCHMARK — coupled oscillators")
+    print(
+        f"  D={D}, T={T_POINTS}, K={K_OUTPUTS}, base_n={base_n}, R={num_resamples}"
+    )
+    print(f"  n_repeats={n_repeats}")
+    print("=" * 70)
+
+    # Shared sample + evaluation (computed once)
+    sr = gsax.sample(BENCH_PROBLEM, n_total, seed=0, calc_second_order=True)
+    Y_jax = coupled_oscillators(jnp.asarray(sr.samples))
+    jax.block_until_ready(Y_jax)
+    Y_np = np.asarray(Y_jax)
+
+    # Warmup gsax bootstrap JIT
+    print("\nWarming up gsax bootstrap JIT ...", end=" ", flush=True)
+    _ = gsax.analyze(sr, Y_jax, num_resamples=num_resamples, key=jax.random.key(99))
+    print("done.")
+
+    # --- gsax no-bootstrap ---
+    gsax_no_boot = []
+    for i in range(n_repeats):
+        t0 = time.perf_counter()
+        r = gsax.analyze(sr, Y_jax)
+        jax.block_until_ready(r.S1)
+        jax.block_until_ready(r.ST)
+        jax.block_until_ready(r.S2)
+        gsax_no_boot.append(time.perf_counter() - t0)
+
+    # --- gsax with bootstrap ---
+    gsax_boot = []
+    for i in range(n_repeats):
+        t0 = time.perf_counter()
+        r = gsax.analyze(
+            sr, Y_jax, num_resamples=num_resamples, key=jax.random.key(i)
+        )
+        jax.block_until_ready(r.S1)
+        jax.block_until_ready(r.S1_conf)
+        gsax_boot.append(time.perf_counter() - t0)
+
+    # --- SALib with bootstrap ---
+    salib_boot = []
+    for i in range(n_repeats):
+        t0 = time.perf_counter()
+        for t_idx in range(T_POINTS):
+            for k_idx in range(K_OUTPUTS):
+                salib_sobol.analyze(
+                    salib_problem,
+                    Y_np[:, t_idx, k_idx],
+                    calc_second_order=True,
+                    num_resamples=num_resamples,
+                    print_to_console=False,
+                )
+        salib_boot.append(time.perf_counter() - t0)
+
+    # --- Print results ---
+    def _ms(times):
+        return np.mean(times) * 1e3
+
+    g_nb = _ms(gsax_no_boot)
+    g_b = _ms(gsax_boot)
+    s_b = _ms(salib_boot)
+
+    print(f"\n{'Method':<30} {'Time (ms)':>12} {'vs gsax-noboot':>16}")
+    print("-" * 60)
+    print(f"  {'gsax (no bootstrap)':<28} {g_nb:>10.1f}   {'1.0x':>14}")
+    print(f"  {'gsax (bootstrap R=' + str(num_resamples) + ')':<28} {g_b:>10.1f}   {g_b / g_nb:>13.1f}x")
+    print(f"  {'SALib (bootstrap R=' + str(num_resamples) + ')':<28} {s_b:>10.1f}   {s_b / g_nb:>13.1f}x")
+    print(f"\n  gsax bootstrap speedup vs SALib: {s_b / g_b:.1f}x")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -260,6 +344,7 @@ def benchmark_timing(base_n: int = 256, n_repeats: int = 3) -> None:
 def main() -> int:
     correct = benchmark_correctness()
     benchmark_timing(base_n=256, n_repeats=3)
+    benchmark_bootstrap_timing(base_n=256, num_resamples=100, n_repeats=3)
 
     print("\n" + "=" * 70)
     if correct:
