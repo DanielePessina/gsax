@@ -1,7 +1,14 @@
 [project]
 name = "gsax"
 version = "0.1.0"
-description = "Add your description here"
+description = "Global Sensitivity Analysis in JAX"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["jax>=0.4", "jaxlib>=0.4", "scipy>=1.10"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.4"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
