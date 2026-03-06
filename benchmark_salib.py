@@ -343,8 +343,8 @@ def benchmark_bootstrap_timing(
 
 def main() -> int:
     correct = benchmark_correctness()
-    benchmark_timing(base_n=256, n_repeats=3)
-    benchmark_bootstrap_timing(base_n=256, num_resamples=100, n_repeats=3)
+    benchmark_timing(base_n=4096, n_repeats=1)
+    benchmark_bootstrap_timing(base_n=4096, num_resamples=200, n_repeats=1)
 
     print("\n" + "=" * 70)
     if correct:

@@ -137,3 +137,52 @@ result = gsax.analyze(sampling_result, Y)
 ## License
 
 See [LICENSE](LICENSE) for details.
+
+```bash
+(base) danielepessina@MacBookPro gsax % uv run benchmark_salib.py
+======================================================================
+CORRECTNESS CHECK  (Ishigami, shared samples)
+======================================================================
+  S1     match (atol=1e-06): PASS
+  ST     match (atol=1e-06): PASS
+  S2     match (atol=1e-06): PASS
+
+======================================================================
+TIMING BENCHMARK — coupled oscillators
+  D=5, T=100, K=4, base_n=4096, n_total=49152
+  SALib must call analyze() 100x4 = 400 times
+  n_repeats=1
+======================================================================
+
+Warming up gsax JIT ... done.
+/Users/danielepessina/Documents/Local Uni/gsax/.venv/lib/python3.12/site-packages/SALib/analyze/sobol.py:141: RuntimeWarning: invalid value encountered in divide
+  Y = (Y - Y.mean()) / Y.std()
+
+Phase               gsax (ms)     SALib (ms)    speedup
+------------------------------------------------------
+  sample               26.4           39.4        1.5x
+  evaluate             67.6          237.3        3.5x
+  analyze             169.0        77455.1      458.4x
+------------------------------------------------------
+  total               262.9        77731.8      295.7x
+
+======================================================================
+BOOTSTRAP BENCHMARK — coupled oscillators
+  D=5, T=100, K=4, base_n=4096, R=200
+  n_repeats=1
+======================================================================
+
+Warming up gsax bootstrap JIT ... done.
+
+Method                            Time (ms)   vs gsax-noboot
+------------------------------------------------------------
+  gsax (no bootstrap)               164.7             1.0x
+  gsax (bootstrap R=200)           6861.6            41.7x
+  SALib (bootstrap R=200)         99252.8           602.5x
+
+  gsax bootstrap speedup vs SALib: 14.5x
+
+======================================================================
+ALL CORRECTNESS CHECKS PASSED
+(base) danielepessina@MacBookPro gsax %
+```
