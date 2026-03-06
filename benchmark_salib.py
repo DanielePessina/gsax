@@ -150,7 +150,7 @@ def benchmark_correctness() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def benchmark_timing(base_n: int = 4096, n_repeats: int = 3) -> None:
+def benchmark_timing(base_n: int = 256, n_repeats: int = 3) -> None:
     D = D_PARAMS
     step = 2 * D + 2
     n_total = base_n * step
@@ -259,7 +259,7 @@ def benchmark_timing(base_n: int = 4096, n_repeats: int = 3) -> None:
 
 def main() -> int:
     correct = benchmark_correctness()
-    benchmark_timing(base_n=4096, n_repeats=3)
+    benchmark_timing(base_n=256, n_repeats=3)
 
     print("\n" + "=" * 70)
     if correct:

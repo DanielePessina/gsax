@@ -22,6 +22,9 @@ wheels/
 .repomix/
 *.xml
 
+# Temporary files
+tmp/
+
 
 .Rproj.user
 
