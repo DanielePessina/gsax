@@ -1,3 +1,5 @@
+"""Saltelli's sampling scheme using Sobol sequences for global sensitivity analysis."""
+
 import math
 from dataclasses import dataclass
 
@@ -9,6 +11,8 @@ from gsax.problem import Problem
 
 @dataclass(frozen=True)
 class SamplingResult:
+    """Holds the generated sample matrix and associated metadata."""
+
     samples: np.ndarray  # (n_total, D) scaled to bounds
     base_n: int
     n_params: int
@@ -17,10 +21,12 @@ class SamplingResult:
 
     @property
     def n_total(self) -> int:
+        """Total number of rows in the sample matrix."""
         return self.samples.shape[0]
 
 
 def _next_power_of_2(n: int) -> int:
+    """Return the smallest power of 2 that is >= *n*."""
     if n <= 0:
         return 1
     return 1 << (n - 1).bit_length()
@@ -34,6 +40,18 @@ def sample(
     scramble: bool = True,
     seed: int | np.random.Generator | None = None,
 ) -> SamplingResult:
+    """Generate a Saltelli sample matrix for Sobol sensitivity analysis.
+
+    Args:
+        problem: Problem definition with parameter names and bounds.
+        n_samples: Minimum desired number of model evaluations.
+        calc_second_order: Whether to generate samples for second-order indices.
+        scramble: Whether to apply Owen scrambling to the Sobol sequence.
+        seed: Random seed or generator for reproducibility.
+
+    Returns:
+        SamplingResult with the scaled sample matrix and metadata.
+    """
     D = problem.num_vars
     step = 2 * D + 2 if calc_second_order else D + 2
     base_n = _next_power_of_2(math.ceil(n_samples / step))

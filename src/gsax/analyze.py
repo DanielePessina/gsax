@@ -1,3 +1,5 @@
+"""Main Sobol sensitivity analysis computation using JAX."""
+
 import jax
 import jax.numpy as jnp
 from jax import Array, vmap
@@ -51,10 +53,14 @@ def _compute_for_single_output(
     """Compute indices for a single output at a single timestep.
 
     Args:
-        A: (N,)
-        AB: (N, D)
-        BA: (N, D) or None
-        B: (N,)
+        A: (N,) model outputs from matrix A.
+        AB: (N, D) model outputs from AB matrices.
+        BA: (N, D) model outputs from BA matrices, or None.
+        B: (N,) model outputs from matrix B.
+        key: JAX PRNG key for bootstrap resampling.
+        num_resamples: Number of bootstrap resamples.
+        conf_level: Confidence level for bootstrap CIs.
+        calc_second_order: Whether to compute second-order indices.
 
     Returns:
         S1, ST: (D,)

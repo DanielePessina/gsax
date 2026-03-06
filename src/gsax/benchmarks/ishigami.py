@@ -1,9 +1,17 @@
+"""Ishigami test function for sensitivity analysis benchmarking.
+
+A standard benchmark with 3 input parameters (x1, x2, x3) and known
+analytical Sobol indices, commonly used to validate sensitivity analysis methods.
+"""
+
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
 from gsax.problem import Problem
 
+# Ishigami problem definition and its known analytical Sobol indices
+# for the default parameters A=7, B=0.1.
 PROBLEM = Problem.from_dict(
     {
         "x1": (-np.pi, np.pi),
@@ -19,5 +27,16 @@ ANALYTICAL_S2 = {(0, 2): 0.2437}  # x1-x3 interaction; others ~0
 
 
 def evaluate(X: Array, A: float = 7.0, B: float = 0.1) -> Array:
-    """f(x) = sin(x1) + A*sin^2(x2) + B*x3^4*sin(x1)"""
+    """Evaluate the Ishigami function.
+
+    f(x) = sin(x1) + A*sin^2(x2) + B*x3^4*sin(x1)
+
+    Args:
+        X: Input array of shape ``(N, 3)`` with columns x1, x2, x3.
+        A: Model parameter controlling the second-order term.
+        B: Model parameter controlling the higher-order interaction term.
+
+    Returns:
+        Array of shape ``(N,)`` with the function output for each sample.
+    """
     return jnp.sin(X[:, 0]) + A * jnp.sin(X[:, 1]) ** 2 + B * X[:, 2] ** 4 * jnp.sin(X[:, 0])
