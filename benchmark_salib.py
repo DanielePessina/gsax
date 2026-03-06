@@ -32,17 +32,19 @@ from gsax.benchmarks.ishigami import evaluate as ishigami_evaluate
 #   y2(t) = x3 * sin(x4 * 10 t) + x0 * x2
 #   y3(t) = (x3 + x4) * exp(-x0 t) * sin(2π x1 t)
 
-T_POINTS = 300
+T_POINTS = 100
 K_OUTPUTS = 4
 D_PARAMS = 5
 
-BENCH_PROBLEM = gsax.Problem.from_dict({
-    "amplitude": (0.1, 2.0),
-    "frequency": (0.5, 5.0),
-    "damping":   (0.01, 1.0),
-    "coupling":  (0.1, 3.0),
-    "drift":     (0.0, 1.0),
-})
+BENCH_PROBLEM = gsax.Problem.from_dict(
+    {
+        "amplitude": (0.1, 2.0),
+        "frequency": (0.5, 5.0),
+        "damping": (0.01, 1.0),
+        "coupling": (0.1, 3.0),
+        "drift": (0.0, 1.0),
+    }
+)
 
 _T_GRID = jnp.linspace(0.0, 5.0, T_POINTS)  # (T,)
 
@@ -65,7 +67,7 @@ def coupled_oscillators(X: jax.Array) -> jax.Array:
     t = _T_GRID[None, :]  # (1, T)
 
     y0 = x0 * jnp.sin(2 * jnp.pi * x1 * t) * jnp.exp(-x2 * t)
-    y1 = x1 * jnp.cos(2 * jnp.pi * x0 * t) + x4 * t ** 2
+    y1 = x1 * jnp.cos(2 * jnp.pi * x0 * t) + x4 * t**2
     y2 = x3 * jnp.sin(x4 * 10 * t) + x0 * x2
     y3 = (x3 + x4) * jnp.exp(-x0 * t) * jnp.sin(2 * jnp.pi * x1 * t)
 
@@ -83,7 +85,7 @@ def coupled_oscillators_numpy(X: np.ndarray) -> np.ndarray:
     t = np.linspace(0.0, 5.0, T_POINTS)[None, :]
 
     y0 = x0 * np.sin(2 * np.pi * x1 * t) * np.exp(-x2 * t)
-    y1 = x1 * np.cos(2 * np.pi * x0 * t) + x4 * t ** 2
+    y1 = x1 * np.cos(2 * np.pi * x0 * t) + x4 * t**2
     y2 = x3 * np.sin(x4 * 10 * t) + x0 * x2
     y3 = (x3 + x4) * np.exp(-x0 * t) * np.sin(2 * np.pi * x1 * t)
 
@@ -93,6 +95,7 @@ def coupled_oscillators_numpy(X: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def gsax_problem_to_salib(problem: gsax.Problem) -> dict:
     return {
@@ -106,6 +109,7 @@ def gsax_problem_to_salib(problem: gsax.Problem) -> dict:
 # Correctness check (Ishigami, shared samples — quick sanity test)
 # ---------------------------------------------------------------------------
 
+
 def benchmark_correctness() -> bool:
     n_samples = 2**14 * 8
     sr = gsax.sample(ISHIGAMI_PROBLEM, n_samples, seed=42, calc_second_order=True)
@@ -117,7 +121,10 @@ def benchmark_correctness() -> bool:
 
     salib_problem = gsax_problem_to_salib(ISHIGAMI_PROBLEM)
     salib_result = salib_sobol.analyze(
-        salib_problem, Y_np, calc_second_order=True, print_to_console=False,
+        salib_problem,
+        Y_np,
+        calc_second_order=True,
+        print_to_console=False,
     )
 
     D = ISHIGAMI_PROBLEM.num_vars
@@ -142,6 +149,7 @@ def benchmark_correctness() -> bool:
 # ---------------------------------------------------------------------------
 # Timing benchmark — multi-output model
 # ---------------------------------------------------------------------------
+
 
 def benchmark_timing(base_n: int = 4096, n_repeats: int = 3) -> None:
     D = D_PARAMS
@@ -233,8 +241,12 @@ def benchmark_timing(base_n: int = 4096, n_repeats: int = 3) -> None:
         sp = s_mean / g_mean if g_mean > 0 else float("inf")
         print(f"  {label:<12} {g_mean:>12.1f}   {s_mean:>12.1f}   {sp:>8.1f}x")
 
-    g_total = np.array(gsax_sample_times) + np.array(gsax_eval_times) + np.array(gsax_analyze_times)
-    s_total = np.array(salib_sample_times) + np.array(salib_eval_times) + np.array(salib_analyze_times)
+    g_total = (
+        np.array(gsax_sample_times) + np.array(gsax_eval_times) + np.array(gsax_analyze_times)
+    )
+    s_total = (
+        np.array(salib_sample_times) + np.array(salib_eval_times) + np.array(salib_analyze_times)
+    )
     g_mean = g_total.mean() * 1e3
     s_mean = s_total.mean() * 1e3
     print("-" * 54)
@@ -244,6 +256,7 @@ def benchmark_timing(base_n: int = 4096, n_repeats: int = 3) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     correct = benchmark_correctness()
