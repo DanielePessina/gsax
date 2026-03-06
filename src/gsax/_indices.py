@@ -18,7 +18,9 @@ def first_order(A: Array, AB_j: Array, B: Array) -> Array:
         Scalar Array with the first-order index.
     """
     y = jnp.concatenate([A, B])
-    return jnp.mean(B * (AB_j - A)) / jnp.var(y)
+    var = jnp.var(y)
+    numerator = jnp.mean(B * (AB_j - A))
+    return jnp.where(var == 0, jnp.nan, numerator / var)
 
 
 def total_order(A: Array, AB_j: Array, B: Array) -> Array:
@@ -35,7 +37,9 @@ def total_order(A: Array, AB_j: Array, B: Array) -> Array:
         Scalar Array with the total-order index.
     """
     y = jnp.concatenate([A, B])
-    return 0.5 * jnp.mean((A - AB_j) ** 2) / jnp.var(y)
+    var = jnp.var(y)
+    numerator = 0.5 * jnp.mean((A - AB_j) ** 2)
+    return jnp.where(var == 0, jnp.nan, numerator / var)
 
 
 def second_order(A: Array, AB_j: Array, AB_k: Array, BA_j: Array, B: Array) -> Array:
@@ -54,7 +58,8 @@ def second_order(A: Array, AB_j: Array, AB_k: Array, BA_j: Array, B: Array) -> A
         Scalar Array with the second-order interaction index.
     """
     y = jnp.concatenate([A, B])
-    Vjk = jnp.mean(BA_j * AB_k - A * B) / jnp.var(y)
+    var = jnp.var(y)
+    Vjk = jnp.where(var == 0, jnp.nan, jnp.mean(BA_j * AB_k - A * B) / var)
     Sj = first_order(A, AB_j, B)
     Sk = first_order(A, AB_k, B)
     return Vjk - Sj - Sk

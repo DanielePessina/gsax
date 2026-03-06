@@ -29,6 +29,7 @@ class SAResult:
     S1_conf: Array | None = None  # (2, T, K, D) or squeezed; [lower, upper]
     ST_conf: Array | None = None
     S2_conf: Array | None = None
+    nan_counts: dict[str, int] | None = None
 
     def __repr__(self) -> str:
         """Return a concise summary showing index shapes."""

@@ -9,6 +9,49 @@ from gsax.results import SAResult
 from gsax.sampling import SamplingResult
 
 
+def _drop_nonfinite(Y: Array, step: int) -> tuple[Array, int]:
+    """Drop sample groups containing non-finite values.
+
+    Args:
+        Y: (n_total, ...) model outputs.
+        step: Number of rows per Saltelli group.
+
+    Returns:
+        (Y_clean, n_dropped) — cleaned array and number of groups dropped.
+    """
+    n_total = Y.shape[0]
+    base_n = n_total // step
+    trailing = Y.shape[1:]
+    grouped = Y[:base_n * step].reshape(base_n, step, *trailing)
+    finite_mask = jnp.all(jnp.isfinite(grouped.reshape(base_n, -1)), axis=1)
+    n_good = int(jnp.sum(finite_mask))
+    n_dropped = base_n - n_good
+    if n_dropped > 0:
+        import numpy as np
+        mask_np = np.asarray(finite_mask)
+        grouped_clean = jnp.asarray(np.asarray(grouped)[mask_np])
+        Y_clean = grouped_clean.reshape(n_good * step, *trailing)
+        return Y_clean, n_dropped
+    return Y, 0
+
+
+def _count_and_report_nans(
+    S1: Array, ST: Array, S2: Array | None,
+) -> dict[str, int]:
+    """Count NaN values in index arrays and print a summary if any exist."""
+    counts: dict[str, int] = {
+        "S1": int(jnp.sum(jnp.isnan(S1))),
+        "ST": int(jnp.sum(jnp.isnan(ST))),
+    }
+    if S2 is not None:
+        counts["S2"] = int(jnp.sum(jnp.isnan(S2)))
+    total = sum(counts.values())
+    if total > 0:
+        parts = ", ".join(f"{k}: {v}" for k, v in counts.items())
+        print(f"gsax: {total} NaN indices in results ({parts})")
+    return counts
+
+
 def _separate_output_values(
     Y: Array, D: int, calc_second_order: bool
 ) -> tuple[Array, Array, Array, Array | None]:
@@ -178,7 +221,11 @@ def _analyze_no_bootstrap(
     S1_out, ST_out, S2_out, _, _, _ = _squeeze_results(
         S1_out, ST_out, S2_out, squeeze_time, squeeze_output
     )
-    return SAResult(S1=S1_out, ST=ST_out, S2=S2_out, problem=sampling_result.problem)
+    nan_counts = _count_and_report_nans(S1_out, ST_out, S2_out)
+    return SAResult(
+        S1=S1_out, ST=ST_out, S2=S2_out, problem=sampling_result.problem,
+        nan_counts=nan_counts,
+    )
 
 
 def _analyze_bootstrap(
@@ -279,9 +326,11 @@ def _analyze_bootstrap(
         S1_out, ST_out, S2_out, squeeze_time, squeeze_output,
         S1_conf, ST_conf, S2_conf,
     )
+    nan_counts = _count_and_report_nans(S1_out, ST_out, S2_out)
     return SAResult(
         S1=S1_out, ST=ST_out, S2=S2_out, problem=sampling_result.problem,
         S1_conf=S1_conf, ST_conf=ST_conf, S2_conf=S2_conf,
+        nan_counts=nan_counts,
     )
 
 
@@ -309,6 +358,22 @@ def analyze(
         SAResult with S1, ST, and optionally S2 and confidence intervals.
     """
     Y = jnp.asarray(Y)
+
+    D = sampling_result.n_params
+    step = 2 * D + 2 if sampling_result.calc_second_order else D + 2
+    Y, n_dropped = _drop_nonfinite(Y, step)
+    if n_dropped > 0:
+        total_groups = Y.shape[0] // step + n_dropped
+        print(f"gsax: dropped {n_dropped} of {total_groups} sample groups containing non-finite values")
+        if Y.shape[0] == 0:
+            raise ValueError("All samples contain non-finite values")
+        sampling_result = SamplingResult(
+            samples=sampling_result.samples,
+            base_n=Y.shape[0] // step,
+            n_params=sampling_result.n_params,
+            calc_second_order=sampling_result.calc_second_order,
+            problem=sampling_result.problem,
+        )
 
     if num_resamples > 0:
         if key is None:
