@@ -34,11 +34,18 @@ def test_st_accuracy(ishigami_result):
 
 def test_s2_accuracy(ishigami_result):
     S2 = np.array(ishigami_result.S2)
+    upper = np.triu_indices_from(S2, k=1)
+    lower = (upper[1], upper[0])
+
+    assert np.all(np.isnan(np.diag(S2))), f"S2 diagonal should be NaN, got {np.diag(S2)}"
+    assert np.allclose(S2[upper], S2[lower]), "S2 should be symmetric off-diagonal"
+
     # x1-x3 interaction
     expected = ANALYTICAL_S2[(0, 2)]
     rel_err = abs(S2[0, 2] - expected) / abs(expected)
     assert rel_err < 0.15, f"S2[0,2] = {S2[0, 2]}, expected {expected}, rel_err={rel_err:.3f}"
-    # Other interactions should be ~0
+
+    # Other upper-triangular interactions should be ~0
     assert abs(S2[0, 1]) < 0.05, f"S2[0,1] = {S2[0, 1]}, expected ~0"
     assert abs(S2[1, 2]) < 0.05, f"S2[1,2] = {S2[1, 2]}, expected ~0"
 
@@ -58,6 +65,19 @@ def test_bootstrap_ci_contains_point_estimate(ishigami_bootstrap_result):
     assert np.all(np.array(r.S1) <= np.array(r.S1_conf[1]))
     assert np.all(np.array(r.ST_conf[0]) <= np.array(r.ST))
     assert np.all(np.array(r.ST) <= np.array(r.ST_conf[1]))
+
+    S2 = np.array(r.S2)
+    S2_lo = np.array(r.S2_conf[0])
+    S2_hi = np.array(r.S2_conf[1])
+    upper = np.triu_indices_from(S2, k=1)
+    lower = (upper[1], upper[0])
+
+    assert np.all(np.isnan(np.diag(S2_lo))), f"S2_conf lower diagonal should be NaN, got {np.diag(S2_lo)}"
+    assert np.all(np.isnan(np.diag(S2_hi))), f"S2_conf upper diagonal should be NaN, got {np.diag(S2_hi)}"
+    assert np.allclose(S2_lo[upper], S2_lo[lower]), "Lower S2_conf bound should be symmetric"
+    assert np.allclose(S2_hi[upper], S2_hi[lower]), "Upper S2_conf bound should be symmetric"
+    assert np.all(S2_lo[upper] <= S2[upper])
+    assert np.all(S2[upper] <= S2_hi[upper])
 
 
 def test_bootstrap_ci_contains_analytical(ishigami_bootstrap_result):
