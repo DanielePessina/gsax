@@ -22,6 +22,9 @@ wheels/
 .repomix/
 *.xml
 
+# Claude Code
+.claude/
+
 # Temporary files
 tmp/
 
