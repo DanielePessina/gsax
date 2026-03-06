@@ -2,19 +2,23 @@
 
 **Global Sensitivity Analysis in JAX**
 
-`gsax` computes Sobol variance-based sensitivity indices entirely in JAX, giving you GPU/TPU acceleration and JIT compilation for free. It implements Saltelli's sampling scheme with Sobol quasi-random sequences and supports first-order, total-order, and second-order indices with chunked vectorization for bounded memory usage.
+`gsax` computes variance-based sensitivity indices entirely in JAX, giving you GPU/TPU acceleration and JIT compilation for free. It provides two complementary methods: **Sobol indices** (via Saltelli sampling) and **RS-HDMR** (surrogate-based, works with any input-output pairs).
 
 ## Features
 
-- Saltelli sampling via Sobol quasi-random sequences (powered by `scipy.stats.qmc`)
-- First-order (S1), total-order (ST), and second-order (S2) Sobol indices
-- Chunked `jit(vmap(...))` execution for bounded memory on large output grids
-- Supports scalar, multi-output, and time-series model outputs
+- **Sobol indices** via Saltelli sampling with Sobol quasi-random sequences (`scipy.stats.qmc`)
+  - First-order (S1), total-order (ST), and second-order (S2) indices
+  - Chunked `jit(vmap(...))` execution for bounded memory on large output grids
+  - ~458x faster than SALib on multi-output time-series analysis; ~14.5x faster on bootstrap
+- **RS-HDMR** (Random Sampling High-Dimensional Model Representation)
+  - Works with **any** set of (X, Y) pairs — no structured sampling required
+  - B-spline surrogate with ANCOVA decomposition (Sa, Sb, S, ST)
+  - Built-in emulator for prediction at new inputs
+  - S1/ST properties for direct comparison with Sobol results
+- Supports scalar, multi-output, and time-series model outputs from the start
 - Bootstrap confidence intervals with JAX-accelerated resampling
 - Automatic data cleaning: non-finite values (NaN/Inf) are detected and dropped by group
-- Diagnostic `nan_counts` on results for post-hoc quality checks
 - Built-in Ishigami benchmark function with known analytical solutions
-- ~458x faster than SALib on multi-output time-series analysis; ~14.5x faster on bootstrap
 
 ## Installation
 
@@ -60,6 +64,43 @@ Expected output (Ishigami function with A=7, B=0.1):
 ```
 First-order indices (S1): [~0.31, ~0.44, ~0.00]
 Total-order indices (ST): [~0.56, ~0.44, ~0.24]
+```
+
+### RS-HDMR (surrogate-based)
+
+```python
+import jax
+import jax.numpy as jnp
+import gsax
+from gsax.benchmarks.ishigami import PROBLEM, evaluate
+
+# 1. Generate any set of input samples (no structured sampling needed)
+key = jax.random.PRNGKey(42)
+bounds = jnp.array(PROBLEM.bounds)
+X = jax.random.uniform(key, (2000, 3), minval=bounds[:, 0], maxval=bounds[:, 1])
+
+# 2. Evaluate your model
+Y = evaluate(X)  # Y.shape == (2000,)
+
+# 3. Compute HDMR sensitivity indices
+result = gsax.analyze_hdmr(
+    PROBLEM, X, Y,
+    maxorder=2,
+    num_bootstrap=20,
+    key=jax.random.PRNGKey(0),
+)
+
+# Sobol-compatible first-order and total-order indices
+print("S1:", result.S1)   # Sa[:D] — structural first-order contribution
+print("ST:", result.ST)   # total-order per parameter
+
+# HDMR-specific: per-term decomposition
+print("Sa:", result.Sa)   # structural (uncorrelated) contribution per term
+print("Sb:", result.Sb)   # correlative contribution per term
+print("Terms:", result.terms)  # ('x1', 'x2', 'x3', 'x1/x2', 'x1/x3', 'x2/x3')
+
+# 4. Use the fitted surrogate as an emulator
+Y_pred = gsax.emulate_hdmr(result, X)
 ```
 
 ## Usage
@@ -268,6 +309,105 @@ class SAResult:
 
 See the next sections for detailed field documentation and shape rules.
 
+### `gsax.analyze_hdmr()`
+
+Compute sensitivity indices via RS-HDMR with B-spline surrogate modelling. Works with any (X, Y) pairs.
+
+```python
+def analyze_hdmr(
+    problem: Problem,
+    X: Array,                          # (N, D) input samples
+    Y: Array,                          # (N,), (N, K), or (N, T, K)
+    *,
+    maxorder: int = 2,                 # 1, 2, or 3
+    maxiter: int = 100,                # backfitting iterations
+    m: int = 2,                        # B-spline intervals (basis = m+3 per dim)
+    num_bootstrap: int = 20,           # 1 = no bootstrap
+    subsample_size: int | None = None, # default: N // 2
+    conf_level: float = 0.95,
+    lambdax: float = 0.01,            # regularization
+    key: Array | None = None,          # required if num_bootstrap > 1
+) -> HDMRResult
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `problem` | `Problem` | required | Parameter names and bounds (used to normalize X to [0, 1]). |
+| `X` | `Array` | required | Input samples, shape `(N, D)`. |
+| `Y` | `Array` | required | Model outputs. Shape `(N,)`, `(N, K)`, or `(N, T, K)`. |
+| `maxorder` | `int` | `2` | Maximum expansion order. 1 = main effects only, 2 = + pairwise interactions, 3 = + triple interactions. |
+| `maxiter` | `int` | `100` | Maximum backfitting iterations for first-order terms. |
+| `m` | `int` | `2` | Number of B-spline intervals. Each dimension gets `m + 3` basis functions. |
+| `num_bootstrap` | `int` | `20` | Number of bootstrap iterations. Set to 1 to skip bootstrap. |
+| `subsample_size` | `int \| None` | `None` | Bootstrap subsample size R. Defaults to `N // 2`. |
+| `conf_level` | `float` | `0.95` | Confidence level for bootstrap CIs. |
+| `lambdax` | `float` | `0.01` | Tikhonov regularization parameter. |
+| `key` | `Array \| None` | `None` | JAX PRNG key. **Required** when `num_bootstrap > 1`. |
+
+**Returns:** `HDMRResult`
+
+### `gsax.emulate_hdmr()`
+
+Predict at new input points using the fitted HDMR surrogate.
+
+```python
+def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `result` | `HDMRResult` | Result from `analyze_hdmr()`. |
+| `X_new` | `Array` | New input points, shape `(N_new, D)`. |
+
+**Returns:** `Array` of shape `(N_new,)` — predicted outputs.
+
+### `HDMRResult`
+
+Dataclass holding HDMR sensitivity indices, confidence intervals, and emulator data.
+
+```python
+@dataclass
+class HDMRResult:
+    Sa: Array                          # structural (uncorrelated) contribution per term
+    Sb: Array                          # correlative contribution per term
+    S: Array                           # total contribution per term (Sa + Sb)
+    ST: Array                          # total-order per parameter
+    problem: Problem
+    terms: tuple[str, ...]             # ("x1", "x2", "x1/x2", ...) term labels
+    Sa_conf: Array | None = None       # bootstrap CI bounds [lo, hi]
+    Sb_conf: Array | None = None
+    S_conf: Array | None = None
+    ST_conf: Array | None = None
+    emulator: dict | None = None       # fitted coefficients for prediction
+    select: Array | None = None        # F-test selection counts
+    rmse: Array | None = None          # emulator RMSE per output
+```
+
+| Field / Property | Shape | Description |
+|---|---|---|
+| `Sa` | `(n_terms,)` / `(K, n_terms)` / `(T, K, n_terms)` | Structural (uncorrelated) contribution of each term. For first-order terms this is equivalent to Sobol S1. |
+| `Sb` | same as Sa | Correlative contribution of each term. Captures effects due to input correlations. |
+| `S` | same as Sa | Total sensitivity per term (`Sa + Sb`). |
+| `ST` | `(D,)` / `(K, D)` / `(T, K, D)` | Total-order sensitivity per parameter (sum of S over all terms involving that parameter). Equivalent to Sobol ST. |
+| `S1` | same as ST | **Property.** First-order Sobol indices — extracts `Sa[:D]`. |
+| `S1_conf` | `(2, ...)` or `None` | **Property.** Confidence interval for S1 — extracts `Sa_conf[..., :D]`. |
+| `terms` | `tuple[str, ...]` | Human-readable labels, e.g. `("x1", "x2", "x1/x2")`. |
+| `emulator` | `dict \| None` | Fitted B-spline coefficients. Pass the result to `emulate_hdmr()` for prediction. |
+| `select` | `(n_terms,)` or `None` | F-test selection counts across bootstrap iterations. |
+| `rmse` | `Array \| None` | Emulator RMSE per output combination. |
+
+**Number of terms by maxorder:**
+
+| maxorder | n_terms | Composition |
+|---|---|---|
+| 1 | D | D first-order terms |
+| 2 | D + C(D,2) | + pairwise interactions |
+| 3 | D + C(D,2) + C(D,3) | + triple interactions |
+
+**When to use HDMR vs Sobol:**
+- Use **Sobol** (`analyze`) when you can run the structured Saltelli sampling design and want exact variance decomposition.
+- Use **HDMR** (`analyze_hdmr`) when model evaluations are expensive and you want to reuse existing runs, when inputs may be correlated, or when you need a surrogate/emulator for prediction.
+
 ---
 
 ## Understanding Output Shapes
@@ -428,11 +568,12 @@ See [LICENSE](LICENSE) for details.
 
 ## Benchmark Results
 
-The benchmark script (`benchmark_salib.py`) validates correctness against SALib and measures performance on a coupled-oscillator model with D=5 parameters, T=100 timesteps, and K=4 outputs. Key findings:
+The benchmark script (`benchmark_salib.py`) validates correctness against SALib and measures performance. Key findings:
 
-- **Correctness:** S1, ST, and S2 match SALib to `atol=1e-6` on the Ishigami function.
-- **Analysis speed:** gsax is **~458x faster** than SALib for multi-output time-series analysis. SALib must loop `analyze()` over every (T, K) slice; gsax vectorizes across all slices in a single JIT-compiled pass.
+- **Sobol correctness:** S1, ST, and S2 match SALib to `atol=1e-6` on the Ishigami function.
+- **Sobol analysis speed:** gsax is **~458x faster** than SALib for multi-output time-series analysis (D=5, T=100, K=4). SALib must loop `analyze()` over every (T, K) slice; gsax vectorizes across all slices in a single JIT-compiled pass.
 - **Bootstrap speed:** gsax bootstrap with R=200 resamples is **~14.5x faster** than SALib's bootstrap.
+- **HDMR correctness:** S1 and ST from gsax HDMR match SALib HDMR within 0.001 on the Ishigami function using identical samples and settings.
 
 ```bash
 (base) danielepessina@MacBookPro gsax % uv run benchmark_salib.py

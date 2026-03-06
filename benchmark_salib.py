@@ -12,6 +12,7 @@ import time
 import jax
 import jax.numpy as jnp
 import numpy as np
+from SALib.analyze import hdmr as salib_hdmr
 from SALib.analyze import sobol as salib_sobol
 from SALib.sample import sobol as salib_sample_sobol
 
@@ -337,6 +338,111 @@ def benchmark_bootstrap_timing(
 
 
 # ---------------------------------------------------------------------------
+# HDMR benchmark — gsax vs SALib (Ishigami, no bootstrap resampling)
+# ---------------------------------------------------------------------------
+
+
+def benchmark_hdmr(n_samples: int = 2000, n_repeats: int = 3) -> bool:
+    """Benchmark HDMR: correctness on Ishigami + timing vs SALib.
+
+    Both use K=1 (no bootstrap resampling in SALib) so that the comparison
+    isolates surrogate fitting speed.
+    """
+    salib_problem = gsax_problem_to_salib(ISHIGAMI_PROBLEM)
+
+    print(f"\n{'=' * 70}")
+    print("HDMR BENCHMARK — Ishigami (no bootstrap)")
+    print(f"  N={n_samples}, D=3, maxorder=2, m=2, K=1")
+    print(f"  n_repeats={n_repeats}")
+    print("=" * 70)
+
+    # Shared random samples (uniform in bounds)
+    rng = np.random.default_rng(42)
+    bounds = np.array(ISHIGAMI_PROBLEM.bounds)
+    X_np = rng.uniform(bounds[:, 0], bounds[:, 1], size=(n_samples, 3))
+    Y_np = np.asarray(ishigami_evaluate(jnp.asarray(X_np)))
+    X_jax = jnp.asarray(X_np)
+    Y_jax = jnp.asarray(Y_np)
+
+    # --- Warmup gsax HDMR JIT ---
+    print("\nWarming up gsax HDMR JIT ...", end=" ", flush=True)
+    r_w = gsax.analyze_hdmr(
+        ISHIGAMI_PROBLEM, X_jax, Y_jax,
+        maxorder=2, m=2,
+    )
+    jax.block_until_ready(r_w.S1)
+    jax.block_until_ready(r_w.ST)
+    print("done.")
+
+    # --- gsax HDMR timing ---
+    gsax_times = []
+    gsax_result = None
+    for _ in range(n_repeats):
+        t0 = time.perf_counter()
+        gsax_result = gsax.analyze_hdmr(
+            ISHIGAMI_PROBLEM, X_jax, Y_jax,
+            maxorder=2, m=2,
+        )
+        jax.block_until_ready(gsax_result.S1)
+        jax.block_until_ready(gsax_result.ST)
+        gsax_times.append(time.perf_counter() - t0)
+
+    # --- SALib HDMR timing ---
+    import warnings
+    salib_times = []
+    salib_result = None
+    for _ in range(n_repeats):
+        t0 = time.perf_counter()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            salib_result = salib_hdmr.analyze(
+                salib_problem, X_np, Y_np,
+                maxorder=2, maxiter=100, m=2, K=1, lambdax=0.01,
+                print_to_console=False,
+            )
+        salib_times.append(time.perf_counter() - t0)
+
+    # --- Timing results ---
+    g_ms = np.mean(gsax_times) * 1e3
+    s_ms = np.mean(salib_times) * 1e3
+    speedup = s_ms / g_ms if g_ms > 0 else float("inf")
+
+    print(f"\n{'Method':<20} {'Time (ms)':>12} {'speedup':>10}")
+    print("-" * 44)
+    print(f"  {'gsax HDMR':<18} {g_ms:>10.1f}   {'1.0x':>8}")
+    print(f"  {'SALib HDMR':<18} {s_ms:>10.1f}   {speedup:>7.1f}x")
+
+    # --- Correctness: compare S1 / ST between gsax and SALib ---
+    # SALib HDMR returns Sa (per term) and ST (per parameter, first D entries).
+    # gsax returns .S1 (property = Sa[:D]) and .ST.
+    D = ISHIGAMI_PROBLEM.num_vars
+    g_S1 = np.asarray(gsax_result.S1)
+    g_ST = np.asarray(gsax_result.ST)
+
+    # SALib's ST is a list of length n_terms; first D entries are per-parameter
+    s_ST = np.array(salib_result["ST"][:D])
+    s_Sa = np.array(salib_result["Sa"][:D])
+
+    all_pass = True
+    print(f"\n{'Index':<6} {'gsax':>10} {'SALib':>10} {'diff':>10} {'match':>8}")
+    print("-" * 48)
+    for label, g, s, atol in [
+        ("S1", g_S1, s_Sa, 0.05),
+        ("ST", g_ST, s_ST, 0.05),
+    ]:
+        for i in range(D):
+            diff = abs(g[i] - s[i])
+            ok = diff < atol
+            all_pass &= ok
+            tag = "PASS" if ok else "FAIL"
+            print(
+                f"  {label}[{i}]  {g[i]:>10.4f} {s[i]:>10.4f} {diff:>10.4f} {tag:>8}"
+            )
+
+    return all_pass
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -345,6 +451,8 @@ def main() -> int:
     correct = benchmark_correctness()
     benchmark_timing(base_n=4096, n_repeats=1)
     benchmark_bootstrap_timing(base_n=4096, num_resamples=200, n_repeats=1)
+    hdmr_correct = benchmark_hdmr(n_samples=2000, n_repeats=3)
+    correct &= hdmr_correct
 
     print("\n" + "=" * 70)
     if correct:

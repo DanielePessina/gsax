@@ -1,0 +1,56 @@
+"""Defines the HDMRResult dataclass for RS-HDMR sensitivity analysis results."""
+
+from dataclasses import dataclass
+
+from jax import Array
+
+from gsax.problem import Problem
+
+
+@dataclass
+class HDMRResult:
+    """RS-HDMR (Random Sampling High-Dimensional Model Representation) results.
+
+    Stores ANCOVA-decomposed sensitivity indices: structural (Sa), correlative
+    (Sb), total per-term (S), and total-order per-parameter (ST). Each term
+    corresponds to a first-, second-, or third-order component function in the
+    HDMR expansion.
+
+    Shapes follow ``(T, K, n_terms)`` for time-resolved multi-output analyses.
+    Singleton T and/or K dimensions are squeezed when the original Y had fewer
+    than 3 dimensions.
+    """
+
+    Sa: Array       # (n_terms,) or (K, n_terms) or (T, K, n_terms)
+    Sb: Array       # correlative contribution, same shape as Sa
+    S: Array        # total contribution per term (Sa + Sb)
+    ST: Array       # (D,) or (K, D) or (T, K, D) total-order per parameter
+    problem: Problem
+    terms: tuple[str, ...]  # ("x1", "x2", "x1/x2", ...) term labels
+    emulator: dict | None = None  # fitted coefficients for prediction
+    select: Array | None = None   # (n_terms,) F-test selection counts
+    rmse: Array | None = None     # emulator RMSE
+
+    @property
+    def S1(self) -> Array:
+        """First-order Sobol indices (structural contribution of first-order terms).
+
+        Equivalent to ``Sa[:D]`` — the uncorrelated variance fraction of each
+        single-parameter component function, which matches the definition of
+        first-order Sobol indices.
+
+        Returns:
+            Array of shape ``(D,)`` / ``(K, D)`` / ``(T, K, D)``.
+        """
+        D = self.problem.num_vars
+        return self.Sa[..., :D]
+
+    def __repr__(self) -> str:
+        """Return a concise summary showing index shapes."""
+        shapes = {
+            "Sa": self.Sa.shape,
+            "Sb": self.Sb.shape,
+            "S": self.S.shape,
+            "ST": self.ST.shape,
+        }
+        return f"HDMRResult({shapes})"
