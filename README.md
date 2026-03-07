@@ -9,7 +9,7 @@
 - **Sobol indices** via Saltelli sampling with Sobol quasi-random sequences (`scipy.stats.qmc`)
   - First-order (S1), total-order (ST), and second-order (S2) indices
   - Chunked `jit(vmap(...))` execution for bounded memory on large output grids
-  - ~458x faster than SALib on multi-output time-series analysis; ~14.5x faster on bootstrap
+  - Faster than SALib on vectorized multi-output and bootstrap workloads, with exact speedups depending on hardware and workload
 - **RS-HDMR** (Random Sampling High-Dimensional Model Representation)
   - Works with **any** set of (X, Y) pairs — no structured sampling required
   - B-spline surrogate with ANCOVA decomposition (Sa, Sb, S, ST)
@@ -148,9 +148,13 @@ sampling_result = gsax.sample(
 
 ```python
 # Y can be:
-#   - (n_total,)       scalar output on the unique rows
-#   - (n_total, K)     multi-output (K outputs)
-#   - (n_total, T, K)  time-series multi-output
+#   - (n_total,)       scalar output (single output, no time dimension)
+#   - (n_total, K)     multi-output (K outputs, no time dimension)
+#   - (n_total, T, K)  time-series multi-output (T timesteps, K outputs)
+#
+# Important: a 2D array is always interpreted as (N, K), never (N, T).
+# If you have time-series with a single output, reshape to (N, T, 1).
+# If you have a single output with no time, just pass a 1D array (N,).
 Y = my_model(sampling_result.samples)
 
 result = gsax.analyze(
@@ -194,6 +198,29 @@ result = gsax.analyze(sampling_result, Y)
 # result.S1.shape == (50, 4, D)  — (T, K, D)
 # result.ST.shape == (50, 4, D)  — (T, K, D)
 # result.S2.shape == (50, 4, D, D)  — (T, K, D, D)
+```
+
+### Edge cases: single output or single timestep
+
+A 2D array is **always** interpreted as `(N, K)` — multiple outputs, no time dimension. This matters when your model has only one output or only one timestep:
+
+```python
+# Single output, no time dimension — pass a 1D array
+Y = my_model(X)          # shape (n_total,)
+result = gsax.analyze(sampling_result, Y)
+# result.S1.shape == (D,)
+
+# Single output WITH time dimension — reshape to (N, T, 1)
+Y = my_model(X)          # shape (n_total, T) — e.g. 50 timesteps
+Y = Y[:, :, None]        # reshape to (n_total, 50, 1)
+result = gsax.analyze(sampling_result, Y)
+# result.S1.shape == (50, 1, D)  — (T, K=1, D)
+
+# Multiple outputs, single timestep — just pass (N, K)
+Y = my_model(X)          # shape (n_total, 4) — 4 outputs
+result = gsax.analyze(sampling_result, Y)
+# result.S1.shape == (4, D)  — (K, D)
+# No need for a time dimension; (N, 1, 4) also works but is unnecessary.
 ```
 
 ---
@@ -294,7 +321,7 @@ def analyze(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `sampling_result` | `SamplingResult` | required | The result from `gsax.sample()`. |
-| `Y` | `Array` | required | Model output evaluated on the unique rows in `sampling_result.samples`. Shape must be `(n_total,)`, `(n_total, K)`, or `(n_total, T, K)` where `n_total` matches `sampling_result.n_total`. |
+| `Y` | `Array` | required | Model output evaluated on the unique rows in `sampling_result.samples`. Shape must be `(n_total,)`, `(n_total, K)`, or `(n_total, T, K)` where `n_total` matches `sampling_result.n_total`. A 2D array is always read as `(N, K)` — for time-series with a single output, reshape to `(N, T, 1)`. |
 | `num_resamples` | `int` | `0` | Number of bootstrap resamples. Set to 0 to skip bootstrap (no confidence intervals). |
 | `conf_level` | `float` | `0.95` | Confidence level for bootstrap intervals (e.g. 0.95 for 95% CI). |
 | `key` | `Array \| None` | `None` | JAX PRNG key (e.g. `jax.random.key(0)`). **Required** when `num_resamples > 0`. |
@@ -343,7 +370,7 @@ def analyze_hdmr(
 |---|---|---|---|
 | `problem` | `Problem` | required | Parameter names and bounds (used to normalize X to [0, 1]). |
 | `X` | `Array` | required | Input samples, shape `(N, D)`. |
-| `Y` | `Array` | required | Model outputs. Shape `(N,)`, `(N, K)`, or `(N, T, K)`. |
+| `Y` | `Array` | required | Model outputs. Shape `(N,)`, `(N, K)`, or `(N, T, K)`. A 2D array is always read as `(N, K)` — for time-series with a single output, reshape to `(N, T, 1)`. |
 | `maxorder` | `int` | `2` | Maximum expansion order. 1 = main effects only, 2 = + pairwise interactions, 3 = + triple interactions. |
 | `maxiter` | `int` | `100` | Maximum backfitting iterations for first-order terms. |
 | `m` | `int` | `2` | Number of B-spline intervals. Each dimension gets `m + 3` basis functions. |
@@ -365,13 +392,23 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array
 | `result` | `HDMRResult` | Result from `analyze_hdmr()`. |
 | `X_new` | `Array` | New input points, shape `(N_new, D)`. |
 
-**Returns:** `Array` of shape `(N_new,)` — predicted outputs.
+**Returns:** `Array` of shape `(N_new,)`, `(N_new, K)`, or `(N_new, T, K)` matching the output layout used during `analyze_hdmr()`.
 
 ### `HDMRResult`
 
 Dataclass holding HDMR sensitivity indices and emulator data.
 
 ```python
+class HDMREmulator(TypedDict):
+    C1: Array
+    C2: Array | None
+    C3: Array | None
+    f0: Array
+    m: int
+    maxorder: int
+    c2: list[tuple[int, int]]
+    c3: list[tuple[int, int, int]]
+
 @dataclass
 class HDMRResult:
     Sa: Array                          # structural (uncorrelated) contribution per term
@@ -380,9 +417,9 @@ class HDMRResult:
     ST: Array                          # total-order per parameter
     problem: Problem
     terms: tuple[str, ...]             # ("x1", "x2", "x1/x2", ...) term labels
-    emulator: dict | None = None       # fitted coefficients for prediction
+    emulator: HDMREmulator | None = None  # fitted coefficients for prediction
     select: Array | None = None        # F-test selection counts across outputs
-    rmse: Array | None = None          # emulator RMSE per output
+    rmse: Array | None = None          # emulator RMSE in output-layout shape
 ```
 
 | Field / Property | Shape | Description |
@@ -390,12 +427,20 @@ class HDMRResult:
 | `Sa` | `(n_terms,)` / `(K, n_terms)` / `(T, K, n_terms)` | Structural (uncorrelated) contribution of each term. For first-order terms this is equivalent to Sobol S1. |
 | `Sb` | same as Sa | Correlative contribution of each term. Captures effects due to input correlations. |
 | `S` | same as Sa | Total sensitivity per term (`Sa + Sb`). |
-| `ST` | `(D,)` / `(K, D)` / `(T, K, D)` | Total-order sensitivity per parameter (sum of S over all terms involving that parameter). Equivalent to Sobol ST. |
+| `ST` | `(D,)` / `(K, D)` / `(T, K, D)` | Total contribution per parameter (sum of S over all terms involving that parameter). Matches classical Sobol ST in the independent-input setting; under correlated inputs it remains an ANCOVA-based total contribution. |
 | `S1` | same as ST | **Property.** First-order Sobol indices — extracts `Sa[:D]`. |
 | `terms` | `tuple[str, ...]` | Human-readable labels, e.g. `("x1", "x2", "x1/x2")`. |
-| `emulator` | `dict \| None` | Fitted B-spline coefficients. Pass the result to `emulate_hdmr()` for prediction. |
+| `emulator` | `HDMREmulator \| None` | Fitted B-spline coefficients. For scalar output, `C1/C2/C3` keep shape `(basis, terms)`; for multi-output/time-series output, they gain leading `(K,)` or `(T, K)` axes. |
 | `select` | `(n_terms,)` or `None` | F-test selection counts summed across all output combinations. |
-| `rmse` | `Array \| None` | Emulator RMSE per output combination. |
+| `rmse` | `Array \| None` | Emulator RMSE with shape `()`, `(K,)`, or `(T, K)` matching the analyzed output layout without the sample axis. |
+
+`emulate_hdmr()` mirrors the analyzed output shape:
+
+| Y shape passed to `analyze_hdmr()` | `emulate_hdmr(..., X_new)` shape |
+|---|---|
+| `(N,)` | `(N_new,)` |
+| `(N, K)` | `(N_new, K)` |
+| `(N, T, K)` | `(N_new, T, K)` |
 
 **Number of terms by maxorder:**
 
@@ -525,7 +570,7 @@ lower_S2 = result.S2_conf[0]    # lower bound, same shape as result.S2
 upper_S2 = result.S2_conf[1]    # upper bound, same shape as result.S2
 ```
 
-The bootstrap is fully vectorized in JAX, making it significantly faster than sequential resampling approaches. With `R=200` resamples on a multi-output time-series problem (D=5, T=100, K=4), gsax is ~14.5x faster than SALib.
+The bootstrap is fully vectorized in JAX, making it substantially faster than sequential resampling approaches on multi-output workloads. Run `benchmark_salib.py` on your hardware for current timings.
 
 **When to use bootstrap:** Bootstrap is recommended when you need to report uncertainty bounds or assess convergence. For exploratory analysis where you only need point estimates, set `num_resamples=0` (the default) to skip it entirely.
 
@@ -569,58 +614,16 @@ See [LICENSE](LICENSE) for details.
 
 ## Benchmark Results
 
-The benchmark script (`benchmark_salib.py`) validates correctness against SALib and measures performance. Key findings:
+The benchmark script (`benchmark_salib.py`) validates correctness against SALib and prints current timings for your machine. It currently checks:
 
 - **Sobol correctness:** S1, ST, and S2 match SALib to `atol=1e-6` on the Ishigami function.
-- **Sobol analysis speed:** gsax is **~458x faster** than SALib for multi-output time-series analysis (D=5, T=100, K=4). SALib must loop `analyze()` over every (T, K) slice; gsax vectorizes across all slices in a single JIT-compiled pass.
-- **Bootstrap speed:** gsax bootstrap with R=200 resamples is **~14.5x faster** than SALib's bootstrap.
-- **HDMR correctness:** S1 and ST from gsax HDMR match SALib HDMR within 0.001 on the Ishigami function using identical samples and settings.
+- **Vectorized Sobol timing:** `gsax.analyze()` is measured on a multi-output time-series workload where SALib must loop over each `(T, K)` slice.
+- **Bootstrap timing:** `gsax.analyze(..., num_resamples=R)` is compared against SALib on the same workload, with machine-dependent timings.
+- **HDMR correctness:** S1 and ST from gsax HDMR are compared against SALib with `|gsax - SALib| < 0.05`, and against Ishigami analytical references with relative-error checks.
+- **Multi-output HDMR regression:** the benchmark verifies that emulator predictions and sensitivity outputs preserve the analyzed output axes.
+
+Run the benchmark locally to reproduce the current numbers:
 
 ```bash
-(base) danielepessina@MacBookPro gsax % uv run benchmark_salib.py
-======================================================================
-CORRECTNESS CHECK  (Ishigami, shared samples)
-======================================================================
-  S1     match (atol=1e-06): PASS
-  ST     match (atol=1e-06): PASS
-  S2     match (atol=1e-06): PASS
-
-======================================================================
-TIMING BENCHMARK — coupled oscillators
-  D=5, T=100, K=4, base_n=4096, n_total=49152
-  SALib must call analyze() 100x4 = 400 times
-  n_repeats=1
-======================================================================
-
-Warming up gsax JIT ... done.
-/Users/danielepessina/Documents/Local Uni/gsax/.venv/lib/python3.12/site-packages/SALib/analyze/sobol.py:141: RuntimeWarning: invalid value encountered in divide
-  Y = (Y - Y.mean()) / Y.std()
-
-Phase               gsax (ms)     SALib (ms)    speedup
-------------------------------------------------------
-  sample               26.4           39.4        1.5x
-  evaluate             67.6          237.3        3.5x
-  analyze             169.0        77455.1      458.4x
-------------------------------------------------------
-  total               262.9        77731.8      295.7x
-
-======================================================================
-BOOTSTRAP BENCHMARK — coupled oscillators
-  D=5, T=100, K=4, base_n=4096, R=200
-  n_repeats=1
-======================================================================
-
-Warming up gsax bootstrap JIT ... done.
-
-Method                            Time (ms)   vs gsax-noboot
-------------------------------------------------------------
-  gsax (no bootstrap)               164.7             1.0x
-  gsax (bootstrap R=200)           6861.6            41.7x
-  SALib (bootstrap R=200)         99252.8           602.5x
-
-  gsax bootstrap speedup vs SALib: 14.5x
-
-======================================================================
-ALL CORRECTNESS CHECKS PASSED
-(base) danielepessina@MacBookPro gsax %
+uv run benchmark_salib.py
 ```

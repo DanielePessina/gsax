@@ -24,7 +24,7 @@ def analyze_hdmr(
 |-----------|------|---------|-------------|
 | `problem` | `Problem` | required | Parameter names and bounds (used to normalize X to [0, 1]). |
 | `X` | `Array` | required | Input samples, shape `(N, D)`. |
-| `Y` | `Array` | required | Model outputs. Shape `(N,)`, `(N, K)`, or `(N, T, K)`. |
+| `Y` | `Array` | required | Model outputs. Shape `(N,)`, `(N, K)`, or `(N, T, K)`. A 2D array is always interpreted as `(N, K)`; for time-series with a single output, reshape to `(N, T, 1)`. |
 | `maxorder` | `int` | `2` | Maximum expansion order. 1 = main effects, 2 = + pairwise, 3 = + triple. |
 | `maxiter` | `int` | `100` | Maximum backfitting iterations for first-order terms. |
 | `m` | `int` | `2` | B-spline intervals. Each dimension gets `m + 3` basis functions. |
@@ -48,7 +48,7 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array
 | `result` | `HDMRResult` | Result from `analyze_hdmr()`. |
 | `X_new` | `Array` | New input points, shape `(N_new, D)`. |
 
-**Returns:** `Array` of shape `(N_new,)`.
+**Returns:** `Array` of shape `(N_new,)`, `(N_new, K)`, or `(N_new, T, K)` matching the output layout used during `analyze_hdmr()`.
 
 ---
 
@@ -57,6 +57,16 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array
 Dataclass holding HDMR sensitivity indices and emulator data.
 
 ```python
+class HDMREmulator(TypedDict):
+    C1: Array
+    C2: Array | None
+    C3: Array | None
+    f0: Array
+    m: int
+    maxorder: int
+    c2: list[tuple[int, int]]
+    c3: list[tuple[int, int, int]]
+
 @dataclass
 class HDMRResult:
     Sa: Array
@@ -65,7 +75,7 @@ class HDMRResult:
     ST: Array
     problem: Problem
     terms: tuple[str, ...]
-    emulator: dict | None = None
+    emulator: HDMREmulator | None = None
     select: Array | None = None
     rmse: Array | None = None
 ```
@@ -79,9 +89,17 @@ class HDMRResult:
 | `S` | same as Sa | Total contribution per term: `Sa + Sb`. |
 | `ST` | `(D,)` / `(K, D)` / `(T, K, D)` | Total-order per parameter (sum of S for all terms involving that parameter). |
 | `terms` | `tuple[str, ...]` | Human-readable labels, e.g. `("x1", "x2", "x1/x2")`. |
-| `emulator` | `dict \| None` | Fitted B-spline coefficients for prediction via `emulate_hdmr()`. |
-| `select` | `(n_terms,)` or `None` | F-test selection counts across outputs. |
-| `rmse` | `Array \| None` | Emulator RMSE per output. |
+| `emulator` | `HDMREmulator \| None` | Fitted B-spline coefficients for prediction via `emulate_hdmr()`. Multi-output HDMR stores leading `(K,)` or `(T, K)` axes on `C1`, `C2`, `C3`, and `f0`. |
+| `select` | `(n_terms,)` or `None` | F-test selection counts summed across analyzed output combinations. |
+| `rmse` | `Array \| None` | Emulator RMSE with shape `()`, `(K,)`, or `(T, K)` matching the analyzed output layout without the sample axis. |
+
+### Emulator Output Shapes
+
+| Y shape passed to `analyze_hdmr()` | `emulate_hdmr(..., X_new)` shape |
+|------------------------------------|----------------------------------|
+| `(N,)` | `(N_new,)` |
+| `(N, K)` | `(N_new, K)` |
+| `(N, T, K)` | `(N_new, T, K)` |
 
 ### Properties
 

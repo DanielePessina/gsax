@@ -22,7 +22,7 @@ from gsax._hdmr import (
     _make_hdmr_kernel,
 )
 from gsax.problem import Problem
-from gsax.results_hdmr import HDMRResult
+from gsax.results_hdmr import HDMREmulator, HDMRResult
 
 
 def _normalize_X(X: Array, problem: Problem) -> Array:
@@ -88,7 +88,7 @@ def _build_term_labels(
 
 
 def _compute_ST(
-    S: Array, c2: Array, c3: Array, n1: int, D: int,
+    S: Array, c2: Array, c3: Array, n1: int,
 ) -> Array:
     """Compute total-order indices by summing S over terms involving each param."""
     ST = S[..., :n1]  # First order terms map 1:1 to parameters.
@@ -135,6 +135,19 @@ def _squeeze_hdmr(
     return tuple(arrays)
 
 
+def _reshape_emulator_value(
+    value: Array, T: int, K_out: int, squeeze_time: bool, squeeze_output: bool,
+) -> Array:
+    """Reshape flattened per-output emulator state back to the analyzed layout."""
+    value = value.reshape((T, K_out) + value.shape[1:])
+
+    if squeeze_time and squeeze_output:
+        return value[0, 0]
+    if squeeze_time:
+        return value[0]
+    return value
+
+
 def analyze_hdmr(
     problem: Problem,
     X: Array,
@@ -156,7 +169,9 @@ def analyze_hdmr(
     Args:
         problem: Parameter names and bounds.
         X: (N, D) input samples.
-        Y: (N,), (N, K), or (N, T, K) model outputs.
+        Y: (N,), (N, K), or (N, T, K) model outputs. A 2D array is always
+            interpreted as (N, K); for time-series with a single output,
+            reshape to (N, T, 1).
         maxorder: Maximum HDMR expansion order (1, 2, or 3).
         maxiter: Maximum backfitting iterations for first-order terms.
         m: Number of B-spline intervals (basis size = m + 3 per dimension).
@@ -214,11 +229,8 @@ def analyze_hdmr(
     cs = min(chunk_size, total)
 
     sa_parts, sb_parts, s_parts, rmse_parts = [], [], [], []
+    c1_parts, c2_parts, c3_parts, f0_parts = [], [], [], []
     select_sum = jnp.zeros(n)
-    C1_sum = jnp.zeros((m1, n1))
-    C2_sum = jnp.zeros((m2, n2)) if n2 > 0 else jnp.zeros((1, 1))
-    C3_sum = jnp.zeros((m3, n3)) if n3 > 0 else jnp.zeros((1, 1))
-    f0_sum = jnp.array(0.0)
 
     batched_kernel = _get_batched_hdmr_kernel(
         D, maxorder, m, maxiter, lambdax, N,
@@ -232,19 +244,19 @@ def analyze_hdmr(
         sb_parts.append(sb)
         s_parts.append(s)
         rmse_parts.append(rmse_val)
+        c1_parts.append(c1_coef)
+        f0_parts.append(f0_val)
         select_sum = select_sum + jnp.sum(sel, axis=0)
-        C1_sum = C1_sum + jnp.sum(c1_coef, axis=0)
         if n2 > 0:
-            C2_sum = C2_sum + jnp.sum(c2_coef, axis=0)
+            c2_parts.append(c2_coef)
         if n3 > 0:
-            C3_sum = C3_sum + jnp.sum(c3_coef, axis=0)
-        f0_sum = f0_sum + jnp.sum(f0_val)
+            c3_parts.append(c3_coef)
 
     # Reshape to (T, K, n_terms) / (T, K, D)
     Sa_out = jnp.concatenate(sa_parts).reshape(T, K_out, n)
     Sb_out = jnp.concatenate(sb_parts).reshape(T, K_out, n)
     S_out = jnp.concatenate(s_parts).reshape(T, K_out, n)
-    ST_out = _compute_ST(S_out, c2_idx, c3_idx, n1, D)
+    ST_out = _compute_ST(S_out, c2_idx, c3_idx, n1)
 
     # Squeeze
     Sa_out, Sb_out, S_out, ST_out = _squeeze_hdmr(
@@ -252,12 +264,29 @@ def analyze_hdmr(
         squeeze_time, squeeze_output,
     )
 
+    C1_out = _reshape_emulator_value(
+        jnp.concatenate(c1_parts), T, K_out, squeeze_time, squeeze_output,
+    )
+    C2_out = None
+    C3_out = None
+    if n2 > 0:
+        C2_out = _reshape_emulator_value(
+            jnp.concatenate(c2_parts), T, K_out, squeeze_time, squeeze_output,
+        )
+    if n3 > 0:
+        C3_out = _reshape_emulator_value(
+            jnp.concatenate(c3_parts), T, K_out, squeeze_time, squeeze_output,
+        )
+    f0_out = _reshape_emulator_value(
+        jnp.concatenate(f0_parts), T, K_out, squeeze_time, squeeze_output,
+    )
+
     # Build emulator dict
-    emulator = {
-        "C1": C1_sum / total,
-        "C2": C2_sum / total if n2 > 0 else None,
-        "C3": C3_sum / total if n3 > 0 else None,
-        "f0": f0_sum / total,
+    emulator: HDMREmulator = {
+        "C1": C1_out,
+        "C2": C2_out,
+        "C3": C3_out,
+        "f0": f0_out,
         "m": m,
         "maxorder": maxorder,
         "c2": list(c2),
@@ -273,19 +302,37 @@ def analyze_hdmr(
         terms=term_labels,
         emulator=emulator,
         select=select_sum,
-        rmse=jnp.concatenate(rmse_parts),
+        rmse=_reshape_emulator_value(
+            jnp.concatenate(rmse_parts), T, K_out, squeeze_time, squeeze_output,
+        ),
     )
+
+
+def _emulator_contract(B: Array, C: Array) -> Array:
+    """Contract basis B (N, m, j) with coefficients C, summing over terms.
+
+    Dispatches on C.ndim to handle scalar (m, j), multi-output (K, m, j),
+    and time-series (T, K, m, j) coefficient layouts.
+    """
+    if C.ndim == 2:
+        return jnp.sum(jnp.einsum('rmj,mj->rj', B, C), axis=1)
+    if C.ndim == 3:
+        return jnp.sum(jnp.einsum('rmj,kmj->rkj', B, C), axis=2)
+    return jnp.sum(jnp.einsum('rmj,tkmj->rtkj', B, C), axis=3)
 
 
 def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
     """Predict at new input points using the fitted HDMR surrogate.
+
+    Note: This function is not JIT-compatible because ``HDMRResult`` is not a
+    registered JAX pytree type.
 
     Args:
         result: HDMRResult from ``analyze_hdmr`` (must have ``emulator`` set).
         X_new: (N_new, D) new input points within the problem bounds.
 
     Returns:
-        Y_pred: (N_new,) predicted outputs.
+        Y_pred: (N_new,), (N_new, K), or (N_new, T, K) predicted outputs.
     """
     em = result.emulator
     if em is None:
@@ -295,14 +342,13 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
     maxorder = em["maxorder"]
     C1 = em["C1"]
     f0 = em["f0"]
-    m1 = em["m"] + 3
 
     # Normalize
     X_n = _normalize_X(X_new, result.problem)
 
     # Build bases and compute predictions
     B1 = _build_B1(X_n, em["m"])  # (N_new, m1, D)
-    Y_total = jnp.sum(jnp.einsum('rmj,mj->rj', B1, C1), axis=1)
+    Y_total = _emulator_contract(B1, C1)
 
     if maxorder >= 2 and em["C2"] is not None:
         _, _, _, _, _, _, _, _, _, _, beta2_host, _ = _get_hdmr_static_data(
@@ -313,7 +359,7 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
             jnp.asarray(em["c2"], dtype=int),
             jnp.asarray(beta2_host, dtype=int),
         )
-        Y_total = Y_total + jnp.sum(jnp.einsum('rmj,mj->rj', B2, em["C2"]), axis=1)
+        Y_total = Y_total + _emulator_contract(B2, em["C2"])
 
     if maxorder >= 3 and em["C3"] is not None:
         _, _, _, _, _, _, _, _, _, _, _, beta3_host = _get_hdmr_static_data(
@@ -324,6 +370,6 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
             jnp.asarray(em["c3"], dtype=int),
             jnp.asarray(beta3_host, dtype=int),
         )
-        Y_total = Y_total + jnp.sum(jnp.einsum('rmj,mj->rj', B3, em["C3"]), axis=1)
+        Y_total = Y_total + _emulator_contract(B3, em["C3"])
 
     return Y_total + f0

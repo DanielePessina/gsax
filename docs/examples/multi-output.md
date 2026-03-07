@@ -51,6 +51,31 @@ result = gsax.analyze(sampling_result, Y)
 print(result.S1[10, 2, 0])
 ```
 
+## Edge Cases: Single Output or Single Timestep
+
+A 2D array is **always** interpreted as `(N, K)` — multiple outputs, no time dimension. This matters when your model has only one output or only one timestep:
+
+```python
+# Single output, no time dimension — pass a 1D array
+Y = my_model(X)          # shape (n_total,)
+result = gsax.analyze(sampling_result, Y)
+# result.S1.shape == (D,)
+
+# Single output WITH time dimension — reshape to (N, T, 1)
+Y = my_model(X)          # shape (n_total, T) — e.g. 50 timesteps
+Y = Y[:, :, None]        # reshape to (n_total, 50, 1)
+result = gsax.analyze(sampling_result, Y)
+# result.S1.shape == (50, 1, D)  — (T, K=1, D)
+
+# Multiple outputs, single timestep — just pass (N, K)
+Y = my_model(X)          # shape (n_total, 4) — 4 outputs
+result = gsax.analyze(sampling_result, Y)
+# result.S1.shape == (4, D)  — (K, D)
+# No need for a time dimension; (N, 1, 4) also works but is unnecessary.
+```
+
+The same rules apply to `gsax.analyze_hdmr()`.
+
 ## Shape Reference
 
 | Y shape | S1 / ST | S2 |
