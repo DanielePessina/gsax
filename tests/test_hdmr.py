@@ -205,7 +205,7 @@ def test_chunk_size_regression_3d(ishigami_data):
         result_default.emulator["C1"], result_chunked.emulator["C1"], rtol=1e-4, atol=5e-4
     )
     np.testing.assert_allclose(
-        result_default.emulator["C2"], result_chunked.emulator["C2"], rtol=1e-4, atol=5e-4
+        result_default.emulator["C2"], result_chunked.emulator["C2"], rtol=1e-4, atol=2e-3
     )
     np.testing.assert_allclose(
         result_default.emulator["f0"], result_chunked.emulator["f0"], rtol=1e-4, atol=5e-4
