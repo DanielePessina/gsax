@@ -10,8 +10,8 @@
 
 - **Sobol indices** via Saltelli sampling with Sobol quasi-random sequences (`scipy.stats.qmc`)
   - First-order (S1), total-order (ST), and second-order (S2) indices
-  - Chunked `jit(vmap(...))` execution for bounded memory on large output grids
-  - Faster than SALib on vectorized multi-output and bootstrap workloads, with exact speedups depending on hardware and workload
+  - Fused JIT kernels and chunked `jit(vmap(...))` execution for bounded memory on large output grids
+  - [**4.7× to 929× faster than SALib**](#benchmark-results) across all output shapes
 - **RS-HDMR** (Random Sampling High-Dimensional Model Representation)
   - Works with **any** set of (X, Y) pairs — no structured sampling required
   - B-spline surrogate with ANCOVA decomposition (Sa, Sb, S, ST)
@@ -25,13 +25,13 @@
 ## Installation
 
 ```bash
-pip install gsax
+pip install git+https://github.com/danielepessina/gsax.git
 ```
 
 Or for development:
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/danielepessina/gsax.git
 cd gsax
 pip install -e ".[dev]"
 ```
@@ -616,16 +616,25 @@ See [LICENSE](LICENSE) for details.
 
 ## Benchmark Results
 
-The benchmark script (`benchmark_salib.py`) validates correctness against SALib and prints current timings for your machine. It currently checks:
+gsax vs SALib on a coupled-oscillator model (D=5 parameters, N=1024 base samples). Post-JIT steady-state timings, best of 5, Apple M3 Pro CPU.
 
-- **Sobol correctness:** S1, ST, and S2 match SALib to `atol=1e-6` on the Ishigami function.
-- **Vectorized Sobol timing:** `gsax.analyze()` is measured on a multi-output time-series workload where SALib must loop over each `(T, K)` slice.
-- **Bootstrap timing:** `gsax.analyze(..., num_resamples=R)` is compared against SALib on the same workload, with machine-dependent timings.
-- **HDMR correctness:** S1 and ST from gsax HDMR are compared against SALib with `|gsax - SALib| < 0.05`, and against Ishigami analytical references with relative-error checks.
-- **Multi-output HDMR regression:** the benchmark verifies that emulator predictions and sensitivity outputs preserve the analyzed output axes.
+| Scenario (T×K) | Method | gsax (ms) | SALib (ms) | Speedup |
+|---|---|---:|---:|---:|
+| 1×1 | analyze (no S2) | 0.6 | 13.2 | **20.7×** |
+| 1×1 | analyze (S2) | 0.9 | 36.7 | **43.0×** |
+| 1×1 | analyze_hdmr | 17.8 | 83.1 | **4.7×** |
+| 1×6 | analyze (no S2) | 0.9 | 80.9 | **88.2×** |
+| 1×6 | analyze (S2) | 1.3 | 280.4 | **216.6×** |
+| 1×6 | analyze_hdmr | 19.3 | 501.4 | **26.0×** |
+| 50×1 | analyze (no S2) | 2.2 | 661.8 | **300.4×** |
+| 50×1 | analyze (S2) | 3.8 | 2092.2 | **554.7×** |
+| 50×1 | analyze_hdmr | 23.2 | 4024.6 | **173.5×** |
+| 50×6 | analyze (no S2) | 7.6 | 4442.1 | **582.6×** |
+| 50×6 | analyze (S2) | 14.3 | 13289.2 | **929.2×** |
+| 50×6 | analyze_hdmr | 38.5 | 29115.3 | **757.1×** |
 
-Run the benchmark locally to reproduce the current numbers:
+Correctness is validated against analytical Ishigami solutions and SALib on every run. Full benchmark script: [`benchmark_salib.py`](https://github.com/DanielePessina/gsax/blob/dev/benchmark_salib.py). See the [docs](https://danielepessina.github.io/gsax/guide/benchmarks) for methodology details.
 
 ```bash
-uv run benchmark_salib.py
+uv run python benchmark_salib.py
 ```

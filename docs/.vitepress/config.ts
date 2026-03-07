@@ -18,6 +18,7 @@ export default defineConfig({
         items: [
           { text: 'Getting Started', link: '/getting-started' },
           { text: 'Methods', link: '/methods' },
+          { text: 'Benchmarks', link: '/benchmarks' },
         ],
       },
       '/examples/': {

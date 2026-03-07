@@ -20,6 +20,6 @@ features:
     details: Surrogate-based sensitivity analysis that works with any (X, Y) pairs. Includes a built-in emulator for prediction.
   - title: Multi-Output & Time-Series
     details: Pass scalar, (N, K), or (N, T, K) outputs. All indices are computed in a single vectorized pass.
-  - title: ~458x Faster than SALib
-    details: Chunked jit(vmap(...)) execution replaces Python loops. Bootstrap resampling is ~14.5x faster.
+  - title: Up to 929× Faster than SALib
+    details: Fused JIT kernels and vectorized execution replace Python loops. 4.7× faster even on scalar outputs, up to 929× on multi-output workloads.
 ---

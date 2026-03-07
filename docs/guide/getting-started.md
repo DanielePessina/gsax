@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-pip install gsax
+pip install git+https://github.com/danielepessina/gsax.git
 ```
 
 For development:
