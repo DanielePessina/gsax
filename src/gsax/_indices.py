@@ -135,9 +135,7 @@ def _fused_first_total(A: Array, AB: Array, B: Array) -> tuple[Array, Array]:
     return S1, ST
 
 
-def _fused_second_order(
-    A: Array, AB: Array, BA: Array, B: Array
-) -> tuple[Array, Array, Array]:
+def _fused_second_order(A: Array, AB: Array, BA: Array, B: Array) -> tuple[Array, Array, Array]:
     """Compute all S1, ST, and S2 indices with a single variance computation.
 
     Args:

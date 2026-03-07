@@ -30,7 +30,6 @@ from gsax._indices import (
 from gsax.results import SAResult
 from gsax.sampling import SamplingResult, _saltelli_step
 
-
 # ---------------------------------------------------------------------------
 # Cached JIT kernels
 # ---------------------------------------------------------------------------
@@ -143,7 +142,7 @@ def _warn_zero_variance_slices(Y: Array) -> None:
 
     if n_outputs == 1:
         warnings.warn(
-            f"gsax: output has zero variance — all Sobol indices will be NaN",
+            "gsax: output has zero variance — all Sobol indices will be NaN",
             stacklevel=4,
         )
         return
@@ -383,9 +382,7 @@ def _analyze_no_bootstrap(
 
         S1_out = jnp.concatenate(s1_parts).reshape(T, K, D)
         ST_out = jnp.concatenate(st_parts).reshape(T, K, D)
-        S2_out = _normalize_s2_matrix(
-            jnp.concatenate(s2_parts).reshape(T, K, D, D)
-        )
+        S2_out = _normalize_s2_matrix(jnp.concatenate(s2_parts).reshape(T, K, D, D))
     else:
         batched = _get_batched_kernel(False)
         s1_parts, st_parts = [], []

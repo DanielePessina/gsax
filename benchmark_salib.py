@@ -237,10 +237,14 @@ def benchmark_correctness() -> bool:
 
     for i in range(D):
         match = bool(np.abs(g_hdmr_S1[i] - s_hdmr_S1[i]) < 0.05)
-        rows.append(("analyze_hdmr", f"S1[{i}]", g_hdmr_S1[i], s_hdmr_S1[i], analytical_S1[i], match, True))
+        rows.append(
+            ("analyze_hdmr", f"S1[{i}]", g_hdmr_S1[i], s_hdmr_S1[i], analytical_S1[i], match, True)
+        )
     for i in range(D):
         match = bool(np.abs(g_hdmr_ST[i] - s_hdmr_ST[i]) < 0.05)
-        rows.append(("analyze_hdmr", f"ST[{i}]", g_hdmr_ST[i], s_hdmr_ST[i], analytical_ST[i], match, True))
+        rows.append(
+            ("analyze_hdmr", f"ST[{i}]", g_hdmr_ST[i], s_hdmr_ST[i], analytical_ST[i], match, True)
+        )
 
     # --- HDMR gsax vs analytical (informational only; RS-HDMR is approximate) ---
     for i in range(D):
@@ -278,9 +282,13 @@ def benchmark_correctness() -> bool:
     print("=" * 78)
     print("CORRECTNESS CHECK  (Ishigami)")
     print("=" * 78)
-    print(f"{'Method':<22} {'Index':<8} {'gsax':>10} {'SALib':>10} {'analytical':>10} {'match':>6}")
+    print(
+        f"{'Method':<22} {'Index':<8} {'gsax':>10} {'SALib':>10} {'analytical':>10} {'match':>6}"
+    )
     print("-" * 78)
-    print("NOTE: overall PASS/FAIL is driven by gsax-vs-SALib agreement plus Sobol-vs-analytical rows.")
+    print(
+        "NOTE: overall PASS/FAIL is driven by gsax-vs-SALib agreement plus Sobol-vs-analytical rows."
+    )
     print("      HDMR-vs-analytical rows are reported for context only.")
     print("-" * 78)
     for method, index, g_val, s_val, a_val, ok, gate in rows:
@@ -460,7 +468,9 @@ def _time_salib_hdmr(salib_problem, X_np, Y_np, T: int, K: int) -> float:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         if T == 1 and K == 1:
-            salib_hdmr.analyze(salib_problem, X_np, Y_np, maxorder=2, maxiter=100, print_to_console=False)
+            salib_hdmr.analyze(
+                salib_problem, X_np, Y_np, maxorder=2, maxiter=100, print_to_console=False
+            )
         elif T == 1:
             for k in range(K):
                 salib_hdmr.analyze(
@@ -489,7 +499,9 @@ def benchmark_timing(base_n: int = 1024) -> None:
     """Run timing benchmarks with separate Sobol tables for 0 and 500 bootstraps."""
     D = D_PARAMS
     if base_n < 300:
-        raise ValueError("base_n must be >= 300 because analyze_hdmr requires at least 300 samples")
+        raise ValueError(
+            "base_n must be >= 300 because analyze_hdmr requires at least 300 samples"
+        )
     salib_problem = gsax_problem_to_salib(BENCH_PROBLEM)
     bounds = np.array(BENCH_PROBLEM.bounds)
 
@@ -602,13 +614,17 @@ def benchmark_timing(base_n: int = 1024) -> None:
     for num_resamples in SOBOL_RESAMPLE_COUNTS:
         label = "NO BOOTSTRAP" if num_resamples == 0 else f"{num_resamples} BOOTSTRAPS"
         print(f"\nSOBOL TIMING — {label}")
-        print(f"{'Scenario (TxK)':<16} {'Method':<30} {'gsax (ms)':>12} {'SALib (ms)':>12} {'speedup':>10}")
+        print(
+            f"{'Scenario (TxK)':<16} {'Method':<30} {'gsax (ms)':>12} {'SALib (ms)':>12} {'speedup':>10}"
+        )
         print("-" * 84)
         for scenario, method, g_ms, s_ms, sp in sobol_rows[num_resamples]:
             print(f"{scenario:<16} {method:<30} {g_ms:>10.1f}   {s_ms:>10.1f}   {sp:>8.1f}x")
 
     print("\nHDMR TIMING")
-    print(f"{'Scenario (TxK)':<16} {'Method':<20} {'gsax (ms)':>12} {'SALib (ms)':>12} {'speedup':>10}")
+    print(
+        f"{'Scenario (TxK)':<16} {'Method':<20} {'gsax (ms)':>12} {'SALib (ms)':>12} {'speedup':>10}"
+    )
     print("-" * 72)
     for scenario, method, g_ms, s_ms, sp in hdmr_rows:
         print(f"{scenario:<16} {method:<20} {g_ms:>10.1f}   {s_ms:>10.1f}   {sp:>8.1f}x")
