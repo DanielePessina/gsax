@@ -1,7 +1,6 @@
 """Tests for data cleaning, division guards, and NaN reporting."""
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 import gsax

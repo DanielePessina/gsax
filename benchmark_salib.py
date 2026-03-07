@@ -136,7 +136,10 @@ def benchmark_correctness() -> bool:
 
     gsax_sobol = gsax.analyze(sr, Y_jax)
     salib_sobol_result = salib_sobol.analyze(
-        salib_problem, Y_np, calc_second_order=True, print_to_console=False,
+        salib_problem,
+        Y_np,
+        calc_second_order=True,
+        print_to_console=False,
     )
 
     g_S1 = np.asarray(gsax_sobol.S1)
@@ -183,7 +186,12 @@ def benchmark_correctness() -> bool:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         salib_hdmr_result = salib_hdmr.analyze(
-            salib_problem, X_np, Y_hdmr_np, maxorder=2, maxiter=100, print_to_console=False,
+            salib_problem,
+            X_np,
+            Y_hdmr_np,
+            maxorder=2,
+            maxiter=100,
+            print_to_console=False,
         )
 
     g_hdmr_S1 = np.asarray(gsax_hdmr.S1)
@@ -257,11 +265,21 @@ def _time_salib_sobol(salib_problem, Y_np, calc_second_order: bool, T: int, K: i
         salib_sobol.analyze(salib_problem, Y_np, calc_second_order=calc_second_order, print_to_console=False)
     elif T == 1:
         for k in range(K):
-            salib_sobol.analyze(salib_problem, Y_np[:, k], calc_second_order=calc_second_order, print_to_console=False)
+            salib_sobol.analyze(
+                salib_problem,
+                Y_np[:, k],
+                calc_second_order=calc_second_order,
+                print_to_console=False,
+            )
     else:
         for t_idx in range(T):
             for k in range(K):
-                salib_sobol.analyze(salib_problem, Y_np[:, t_idx, k], calc_second_order=calc_second_order, print_to_console=False)
+                salib_sobol.analyze(
+                    salib_problem,
+                    Y_np[:, t_idx, k],
+                    calc_second_order=calc_second_order,
+                    print_to_console=False,
+                )
     return time.perf_counter() - t0
 
 
@@ -283,11 +301,25 @@ def _time_salib_hdmr(salib_problem, X_np, Y_np, T: int, K: int) -> float:
             salib_hdmr.analyze(salib_problem, X_np, Y_np, maxorder=2, maxiter=100, print_to_console=False)
         elif T == 1:
             for k in range(K):
-                salib_hdmr.analyze(salib_problem, X_np, Y_np[:, k], maxorder=2, maxiter=100, print_to_console=False)
+                salib_hdmr.analyze(
+                    salib_problem,
+                    X_np,
+                    Y_np[:, k],
+                    maxorder=2,
+                    maxiter=100,
+                    print_to_console=False,
+                )
         else:
             for t_idx in range(T):
                 for k_idx in range(K):
-                    salib_hdmr.analyze(salib_problem, X_np, Y_np[:, t_idx, k_idx], maxorder=2, maxiter=100, print_to_console=False)
+                    salib_hdmr.analyze(
+                        salib_problem,
+                        X_np,
+                        Y_np[:, t_idx, k_idx],
+                        maxorder=2,
+                        maxiter=100,
+                        print_to_console=False,
+                    )
     return time.perf_counter() - t0
 
 

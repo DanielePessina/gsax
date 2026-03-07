@@ -1,7 +1,8 @@
-import gsax
-from gsax.benchmarks.ishigami import PROBLEM, evaluate
 import jax
 import jax.numpy as jnp
+
+import gsax
+from gsax.benchmarks.ishigami import PROBLEM, evaluate
 
 # =============================================================================
 # 1. Sobol analysis (sample + analyze)
@@ -55,10 +56,10 @@ Y_hdmr = evaluate(X)  # (2000,)
 hdmr_result = gsax.analyze_hdmr(PROBLEM, X, Y_hdmr, maxorder=2)
 
 print("\n=== HDMR indices ===")
-print("S1:", hdmr_result.S1)   # (3,) first-order
-print("ST:", hdmr_result.ST)   # (3,) total-order
-print("Sa:", hdmr_result.Sa)   # per-term structural contribution
-print("Sb:", hdmr_result.Sb)   # per-term correlative contribution
+print("S1:", hdmr_result.S1)  # (3,) first-order
+print("ST:", hdmr_result.ST)  # (3,) total-order
+print("Sa:", hdmr_result.Sa)  # per-term structural contribution
+print("Sb:", hdmr_result.Sb)  # per-term correlative contribution
 print("Terms:", hdmr_result.terms)
 
 # Use the fitted surrogate as an emulator
@@ -94,7 +95,9 @@ for n_samples in n_samples_list:
         # --- HDMR setup ---
         key_bench = jax.random.PRNGKey(0)
         bounds = jnp.array(PROBLEM.bounds)
-        X_hdmr = jax.random.uniform(key_bench, (n_samples, 3), minval=bounds[:, 0], maxval=bounds[:, 1])
+        X_hdmr = jax.random.uniform(
+            key_bench, (n_samples, 3), minval=bounds[:, 0], maxval=bounds[:, 1]
+        )
         base_Y_hdmr = evaluate(X_hdmr)
         if n_out == 1:
             Y_hdmr_bench = base_Y_hdmr

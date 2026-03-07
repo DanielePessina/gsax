@@ -27,9 +27,7 @@ def _assert_matches_analytical_s1_st(S1: np.ndarray, ST: np.ndarray) -> None:
 
     for i, expected in enumerate(ANALYTICAL_ST):
         rel_err = abs(ST[i] - expected) / max(abs(expected), 0.01)
-        assert rel_err < 0.25, (
-            f"ST[{i}] = {ST[i]:.4f}, expected {expected}, rel_err={rel_err:.3f}"
-        )
+        assert rel_err < 0.25, f"ST[{i}] = {ST[i]:.4f}, expected {expected}, rel_err={rel_err:.3f}"
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +46,9 @@ def hdmr_result(ishigami_data):
     """Run HDMR analysis once for all tests."""
     X, Y = ishigami_data
     return analyze_hdmr(
-        PROBLEM, X, Y,
+        PROBLEM,
+        X,
+        Y,
         maxorder=2,
         m=2,
     )
@@ -57,6 +57,7 @@ def hdmr_result(ishigami_data):
 # ---------------------------------------------------------------------------
 # Accuracy tests
 # ---------------------------------------------------------------------------
+
 
 def test_st_accuracy(hdmr_result):
     """Total-order indices should approximate analytical values."""
@@ -75,11 +76,16 @@ def test_s1_via_sa(hdmr_result):
 # Shape tests
 # ---------------------------------------------------------------------------
 
+
 def test_shapes_1d(ishigami_data):
     """Y shape (N,) -> index shapes (n_terms,) and (D,)."""
     X, Y = ishigami_data
     result = analyze_hdmr(
-        PROBLEM, X, Y, maxorder=2, m=2,
+        PROBLEM,
+        X,
+        Y,
+        maxorder=2,
+        m=2,
     )
     D = PROBLEM.num_vars
     n_terms = D + D * (D - 1) // 2  # D + C(D,2)
@@ -102,7 +108,11 @@ def test_shapes_2d(ishigami_data):
     K = 2
     Y_2d = jnp.stack([Y, Y * 0.5], axis=1)  # (N, 2)
     result = analyze_hdmr(
-        PROBLEM, X, Y_2d, maxorder=2, m=2,
+        PROBLEM,
+        X,
+        Y_2d,
+        maxorder=2,
+        m=2,
     )
     D = PROBLEM.num_vars
     n_terms = D + D * (D - 1) // 2
@@ -122,7 +132,11 @@ def test_shapes_3d(ishigami_data):
     T, K = 2, 3
     Y_3d = jnp.broadcast_to(Y[:, None, None], (Y.shape[0], T, K))
     result = analyze_hdmr(
-        PROBLEM, X, Y_3d, maxorder=2, m=2,
+        PROBLEM,
+        X,
+        Y_3d,
+        maxorder=2,
+        m=2,
     )
     D = PROBLEM.num_vars
     n_terms = D + D * (D - 1) // 2
@@ -143,7 +157,12 @@ def test_chunk_size_regression(ishigami_data):
 
     result_default = analyze_hdmr(PROBLEM, X, Y_2d, maxorder=2, m=2)
     result_chunked = analyze_hdmr(
-        PROBLEM, X, Y_2d, maxorder=2, m=2, chunk_size=1,
+        PROBLEM,
+        X,
+        Y_2d,
+        maxorder=2,
+        m=2,
+        chunk_size=1,
     )
 
     np.testing.assert_allclose(result_default.Sa, result_chunked.Sa, rtol=1e-6, atol=1e-6)
@@ -167,7 +186,12 @@ def test_chunk_size_regression_3d(ishigami_data):
 
     result_default = analyze_hdmr(PROBLEM, X, Y_tk, maxorder=2, m=2)
     result_chunked = analyze_hdmr(
-        PROBLEM, X, Y_tk, maxorder=2, m=2, chunk_size=1,
+        PROBLEM,
+        X,
+        Y_tk,
+        maxorder=2,
+        m=2,
+        chunk_size=1,
     )
 
     np.testing.assert_allclose(result_default.Sa, result_chunked.Sa, rtol=1e-6, atol=1e-6)
@@ -177,9 +201,15 @@ def test_chunk_size_regression_3d(ishigami_data):
     np.testing.assert_allclose(result_default.rmse, result_chunked.rmse, rtol=1e-6, atol=1e-6)
     assert result_default.emulator is not None
     assert result_chunked.emulator is not None
-    np.testing.assert_allclose(result_default.emulator["C1"], result_chunked.emulator["C1"], rtol=1e-4, atol=5e-4)
-    np.testing.assert_allclose(result_default.emulator["C2"], result_chunked.emulator["C2"], rtol=1e-4, atol=5e-4)
-    np.testing.assert_allclose(result_default.emulator["f0"], result_chunked.emulator["f0"], rtol=1e-4, atol=5e-4)
+    np.testing.assert_allclose(
+        result_default.emulator["C1"], result_chunked.emulator["C1"], rtol=1e-4, atol=5e-4
+    )
+    np.testing.assert_allclose(
+        result_default.emulator["C2"], result_chunked.emulator["C2"], rtol=1e-4, atol=5e-4
+    )
+    np.testing.assert_allclose(
+        result_default.emulator["f0"], result_chunked.emulator["f0"], rtol=1e-4, atol=5e-4
+    )
     np.testing.assert_allclose(
         emulate_hdmr(result_default, X),
         emulate_hdmr(result_chunked, X),
@@ -199,8 +229,12 @@ def test_repeated_calls_identical(ishigami_data):
     np.testing.assert_allclose(result_first.S, result_second.S, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(result_first.ST, result_second.ST, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(result_first.rmse, result_second.rmse, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_first.emulator["C1"], result_second.emulator["C1"], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_first.emulator["C2"], result_second.emulator["C2"], rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        result_first.emulator["C1"], result_second.emulator["C1"], rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        result_first.emulator["C2"], result_second.emulator["C2"], rtol=1e-6, atol=1e-6
+    )
     assert result_first.terms == result_second.terms
 
 
@@ -208,11 +242,16 @@ def test_repeated_calls_identical(ishigami_data):
 # maxorder tests
 # ---------------------------------------------------------------------------
 
+
 def test_maxorder_1(ishigami_data):
     """maxorder=1 should produce D terms."""
     X, Y = ishigami_data
     result = analyze_hdmr(
-        PROBLEM, X, Y, maxorder=1, m=2,
+        PROBLEM,
+        X,
+        Y,
+        maxorder=1,
+        m=2,
     )
     assert result.Sa.shape == (PROBLEM.num_vars,)
     assert len(result.terms) == PROBLEM.num_vars
@@ -223,7 +262,11 @@ def test_maxorder_2(ishigami_data):
     X, Y = ishigami_data
     D = PROBLEM.num_vars
     result = analyze_hdmr(
-        PROBLEM, X, Y, maxorder=2, m=2,
+        PROBLEM,
+        X,
+        Y,
+        maxorder=2,
+        m=2,
     )
     expected_n = D + D * (D - 1) // 2
     assert result.Sa.shape == (expected_n,)
@@ -235,7 +278,11 @@ def test_maxorder_3(ishigami_data):
     X, Y = ishigami_data
     D = PROBLEM.num_vars
     result = analyze_hdmr(
-        PROBLEM, X, Y, maxorder=3, m=2,
+        PROBLEM,
+        X,
+        Y,
+        maxorder=3,
+        m=2,
     )
     expected_n = D + D * (D - 1) // 2 + D * (D - 1) * (D - 2) // 6
     assert result.Sa.shape == (expected_n,)
@@ -245,6 +292,7 @@ def test_maxorder_3(ishigami_data):
 # ---------------------------------------------------------------------------
 # Emulator tests
 # ---------------------------------------------------------------------------
+
 
 def test_emulator_prediction(hdmr_result, ishigami_data):
     """Emulator predictions on training data should have low RMSE."""
@@ -340,6 +388,7 @@ def test_multi_output_emulator_preserves_non_proportional_outputs(ishigami_data)
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_term_labels(hdmr_result):
     """Term labels should contain parameter names and interaction terms."""

@@ -35,15 +35,17 @@ class HDMRResult:
     than 3 dimensions.
     """
 
-    Sa: Array       # (n_terms,) or (K, n_terms) or (T, K, n_terms)
-    Sb: Array       # correlative contribution, same shape as Sa
-    S: Array        # total contribution per term (Sa + Sb)
-    ST: Array       # (D,) or (K, D) or (T, K, D) total-order per parameter
+    Sa: Array  # (n_terms,) or (K, n_terms) or (T, K, n_terms)
+    Sb: Array  # correlative contribution, same shape as Sa
+    S: Array  # total contribution per term (Sa + Sb)
+    ST: Array  # (D,) or (K, D) or (T, K, D) total-order per parameter
     problem: Problem
     terms: tuple[str, ...]  # ("x1", "x2", "x1/x2", ...) term labels
-    emulator: HDMREmulator | None = None  # fitted coefficients, matching scalar/multi-output layout
-    select: Array | None = None   # (n_terms,) F-test selection counts
-    rmse: Array | None = None     # (), (K,), or (T, K) emulator RMSE
+    emulator: HDMREmulator | None = (
+        None  # fitted coefficients, matching scalar/multi-output layout
+    )
+    select: Array | None = None  # (n_terms,) F-test selection counts
+    rmse: Array | None = None  # (), (K,), or (T, K) emulator RMSE
 
     @property
     def S1(self) -> Array:

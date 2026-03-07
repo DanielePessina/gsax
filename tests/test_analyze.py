@@ -73,8 +73,12 @@ def test_bootstrap_ci_contains_point_estimate(ishigami_bootstrap_result):
     upper = np.triu_indices_from(S2, k=1)
     lower = (upper[1], upper[0])
 
-    assert np.all(np.isnan(np.diag(S2_lo))), f"S2_conf lower diagonal should be NaN, got {np.diag(S2_lo)}"
-    assert np.all(np.isnan(np.diag(S2_hi))), f"S2_conf upper diagonal should be NaN, got {np.diag(S2_hi)}"
+    assert np.all(np.isnan(np.diag(S2_lo))), (
+        f"S2_conf lower diagonal should be NaN, got {np.diag(S2_lo)}"
+    )
+    assert np.all(np.isnan(np.diag(S2_hi))), (
+        f"S2_conf upper diagonal should be NaN, got {np.diag(S2_hi)}"
+    )
     assert np.allclose(S2_lo[upper], S2_lo[lower]), "Lower S2_conf bound should be symmetric"
     assert np.allclose(S2_hi[upper], S2_hi[lower]), "Upper S2_conf bound should be symmetric"
     assert np.all(S2_lo[upper] <= S2[upper])

@@ -11,10 +11,10 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-
 # ---------------------------------------------------------------------------
 # B-spline basis
 # ---------------------------------------------------------------------------
+
 
 def _bspline_basis(x: Array, m: int) -> Array:
     """Evaluate m+3 cubic B-spline basis functions at points x in [0, 1].
@@ -35,25 +35,29 @@ def _bspline_basis(x: Array, m: int) -> Array:
     u = x[:, None] * m - i[None, :] + 3.0
 
     # Standard cubic B-spline on support [0, 4]
-    p1 = u ** 3 / 6.0
-    p2 = (-3 * u ** 3 + 12 * u ** 2 - 12 * u + 4) / 6.0
-    p3 = (3 * u ** 3 - 24 * u ** 2 + 60 * u - 44) / 6.0
+    p1 = u**3 / 6.0
+    p2 = (-3 * u**3 + 12 * u**2 - 12 * u + 4) / 6.0
+    p3 = (3 * u**3 - 24 * u**2 + 60 * u - 44) / 6.0
     p4 = (4 - u) ** 3 / 6.0
 
     val = jnp.where(
-        u < 0, 0.0,
+        u < 0,
+        0.0,
         jnp.where(
-            u < 1, p1,
+            u < 1,
+            p1,
             jnp.where(
-                u < 2, p2,
+                u < 2,
+                p2,
                 jnp.where(
-                    u < 3, p3,
+                    u < 3,
+                    p3,
                     jnp.where(u <= 4, p4, 0.0),
                 ),
             ),
         ),
     )
-    return jnp.maximum(val * (m ** 3), 0.0)
+    return jnp.maximum(val * (m**3), 0.0)
 
 
 def _build_B1(X_n: Array, m: int) -> Array:
@@ -82,7 +86,7 @@ def _build_B2(B1: Array, c2: Array, beta: Array) -> Array:
     Returns:
         B2: (N, m1^2, n2) second-order basis.
     """
-    left = B1[:, :, c2[:, 0]][:, beta[:, 0], :]   # (N, m2, n2)
+    left = B1[:, :, c2[:, 0]][:, beta[:, 0], :]  # (N, m2, n2)
     right = B1[:, :, c2[:, 1]][:, beta[:, 1], :]  # (N, m2, n2)
     return left * right
 
@@ -108,8 +112,14 @@ def _build_B3(B1: Array, c3: Array, beta: Array) -> Array:
 # First-order fitting with backfitting
 # ---------------------------------------------------------------------------
 
+
 def _fit_first_order(
-    B1: Array, Y_res: Array, m1: int, n1: int, maxiter: int, lambdax: float,
+    B1: Array,
+    Y_res: Array,
+    m1: int,
+    n1: int,
+    maxiter: int,
+    lambdax: float,
 ) -> tuple[Array, Array, Array]:
     """Fit first-order component functions via regularized least squares + backfitting.
 
@@ -131,20 +141,21 @@ def _fit_first_order(
     # Precompute solver matrices: T1[j] = (B1_j^T B1_j + lam*I)^{-1} B1_j^T
     # BtB: (n1, m1, m1), B1_t: (n1, m1, R)
     B1_t = B1.transpose(2, 1, 0)  # (n1, m1, R)
-    BtB = jnp.einsum('jmr,jnr->jmn', B1_t, B1_t)  # (n1, m1, m1)
+    BtB = jnp.einsum("jmr,jnr->jmn", B1_t, B1_t)  # (n1, m1, m1)
 
     T1 = jax.vmap(lambda btb, bt: jnp.linalg.solve(btb + lam_eye, bt))(
-        BtB, B1_t,
+        BtB,
+        B1_t,
     )  # (n1, m1, R)
 
     # Initial individual fit: C1[:, j] = T1[j] @ Y_res
-    C1 = jnp.einsum('jmr,r->jm', T1, Y_res).T  # (m1, n1)
+    C1 = jnp.einsum("jmr,r->jm", T1, Y_res).T  # (m1, n1)
 
     # Backfitting via while_loop
     var_old = jnp.sum(jnp.square(C1), axis=0)  # (n1,)
 
     def _update_j(C1: Array, j: int) -> tuple[Array, None]:
-        all_contrib = jnp.einsum('rmj,mj->r', B1, C1)  # (R,)
+        all_contrib = jnp.einsum("rmj,mj->r", B1, C1)  # (R,)
         j_contrib = B1[:, :, j] @ C1[:, j]  # (R,)
         Y_r = Y_res - all_contrib + j_contrib
         C1 = C1.at[:, j].set(T1[j] @ Y_r)
@@ -165,7 +176,7 @@ def _fit_first_order(
     C1, _, _, _ = jax.lax.while_loop(_backfit_cond, _backfit_body, init_state)
 
     # Final contributions and residual update
-    Y_em1 = jnp.einsum('rmj,mj->rj', B1, C1)  # (R, n1)
+    Y_em1 = jnp.einsum("rmj,mj->rj", B1, C1)  # (R, n1)
     Y_res_out = Y_res - jnp.sum(Y_em1, axis=1)  # (R,)
     return Y_em1, Y_res_out, C1
 
@@ -174,8 +185,13 @@ def _fit_first_order(
 # Higher-order fitting (no backfitting)
 # ---------------------------------------------------------------------------
 
+
 def _fit_higher_order(
-    B: Array, Y_res: Array, n_terms: int, m_basis: int, lambdax: float,
+    B: Array,
+    Y_res: Array,
+    n_terms: int,
+    m_basis: int,
+    lambdax: float,
 ) -> tuple[Array, Array, Array]:
     """Fit second- or third-order terms via regularized least squares.
 
@@ -192,15 +208,16 @@ def _fit_higher_order(
         C: (m_basis, n_terms) coefficients.
     """
     lam_eye = lambdax * jnp.eye(m_basis)
-    BtB = jnp.einsum('rmj,rnj->jmn', B, B)  # (n_terms, m_basis, m_basis)
-    BtY = jnp.einsum('rmj,r->jm', B, Y_res)  # (n_terms, m_basis)
+    BtB = jnp.einsum("rmj,rnj->jmn", B, B)  # (n_terms, m_basis, m_basis)
+    BtY = jnp.einsum("rmj,r->jm", B, Y_res)  # (n_terms, m_basis)
 
     C = jax.vmap(lambda btb, bty: jnp.linalg.solve(btb + lam_eye, bty))(
-        BtB, BtY,
+        BtB,
+        BtY,
     )  # (n_terms, m_basis)
     C = C.T  # (m_basis, n_terms)
 
-    Y_em = jnp.einsum('rmj,mj->rj', B, C)  # (R, n_terms)
+    Y_em = jnp.einsum("rmj,mj->rj", B, C)  # (R, n_terms)
     Y_res_out = Y_res - jnp.sum(Y_em, axis=1)
     return Y_em, Y_res_out, C
 
@@ -208,6 +225,7 @@ def _fit_higher_order(
 # ---------------------------------------------------------------------------
 # ANCOVA decomposition
 # ---------------------------------------------------------------------------
+
 
 def _ancova(Y: Array, Y_em: Array, V_Y: Array) -> tuple[Array, Array, Array]:
     """ANCOVA decomposition of sensitivity indices.
@@ -244,6 +262,7 @@ def _ancova(Y: Array, Y_em: Array, V_Y: Array) -> tuple[Array, Array, Array]:
 # F-test
 # ---------------------------------------------------------------------------
 
+
 def _f_ppf(q: float, d1: float, d2: float) -> float:
     """Compute F-distribution percent point function via bisection on betainc.
 
@@ -275,13 +294,22 @@ def _compute_f_crits(alpha: float, m1: int, m2: int, m3: int, R: int) -> Array:
         if R > p:
             crits.append(_f_ppf(alpha, float(p), float(R - p)))
         else:
-            crits.append(float('inf'))
+            crits.append(float("inf"))
     return jnp.array(crits)
 
 
 def _f_test(
-    Y: Array, f0: Array, Y_em: Array, R: int,
-    m1: int, m2: int, m3: int, n1: int, n2: int, n3: int, n: int,
+    Y: Array,
+    f0: Array,
+    Y_em: Array,
+    R: int,
+    m1: int,
+    m2: int,
+    m3: int,
+    n1: int,
+    n2: int,
+    n3: int,
+    n: int,
     f_crits: Array,
 ) -> Array:
     """F-test for model selection (JIT-compatible).
@@ -304,12 +332,14 @@ def _f_test(
     term_idx = jnp.arange(n)
     # Assign basis size per term based on order
     p1 = jnp.where(
-        term_idx < n1, m1,
+        term_idx < n1,
+        m1,
         jnp.where(term_idx < n1 + n2, m2, m3),
     ).astype(jnp.float32)
     # Assign critical value per term
     f_crit_per_term = jnp.where(
-        term_idx < n1, f_crits[0],
+        term_idx < n1,
+        f_crits[0],
         jnp.where(term_idx < n1 + n2, f_crits[1], f_crits[2]),
     )
 
@@ -329,9 +359,19 @@ def _f_test(
 # Single bootstrap iteration kernel
 # ---------------------------------------------------------------------------
 
+
 def _make_hdmr_kernel(
-    maxorder: int, m1: int, n1: int, maxiter: int,
-    m2: int, m3: int, n2: int, n3: int, n: int, lambdax: float, R: int,
+    maxorder: int,
+    m1: int,
+    n1: int,
+    maxiter: int,
+    m2: int,
+    m3: int,
+    n2: int,
+    n3: int,
+    n: int,
+    lambdax: float,
+    R: int,
 ):
     """Create an HDMR fitting kernel for a given maxorder.
 
@@ -349,13 +389,29 @@ def _make_hdmr_kernel(
             Y_res = Y_sub - f0
 
             Y_em1, Y_res, C1 = _fit_first_order(
-                B1_sub, Y_res, m1, n1, maxiter, lambdax,
+                B1_sub,
+                Y_res,
+                m1,
+                n1,
+                maxiter,
+                lambdax,
             )
             Y_em = Y_em1
 
             S, Sa, Sb = _ancova(Y_sub, Y_em, V_Y)
             select = _f_test(
-                Y_sub, f0, Y_em, R, m1, m2, m3, n1, n2, n3, n, f_crits,
+                Y_sub,
+                f0,
+                Y_em,
+                R,
+                m1,
+                m2,
+                m3,
+                n1,
+                n2,
+                n3,
+                n,
+                f_crits,
             )
             Y_pred = f0 + jnp.sum(Y_em, axis=1)
             rmse = jnp.sqrt(jnp.mean(jnp.square(Y_sub - Y_pred)))
@@ -372,16 +428,36 @@ def _make_hdmr_kernel(
             Y_res = Y_sub - f0
 
             Y_em1, Y_res, C1 = _fit_first_order(
-                B1_sub, Y_res, m1, n1, maxiter, lambdax,
+                B1_sub,
+                Y_res,
+                m1,
+                n1,
+                maxiter,
+                lambdax,
             )
             Y_em2, Y_res, C2 = _fit_higher_order(
-                B2_sub, Y_res, n2, m2, lambdax,
+                B2_sub,
+                Y_res,
+                n2,
+                m2,
+                lambdax,
             )
             Y_em = jnp.concatenate([Y_em1, Y_em2], axis=1)
 
             S, Sa, Sb = _ancova(Y_sub, Y_em, V_Y)
             select = _f_test(
-                Y_sub, f0, Y_em, R, m1, m2, m3, n1, n2, n3, n, f_crits,
+                Y_sub,
+                f0,
+                Y_em,
+                R,
+                m1,
+                m2,
+                m3,
+                n1,
+                n2,
+                n3,
+                n,
+                f_crits,
             )
             Y_pred = f0 + jnp.sum(Y_em, axis=1)
             rmse = jnp.sqrt(jnp.mean(jnp.square(Y_sub - Y_pred)))
@@ -398,19 +474,43 @@ def _make_hdmr_kernel(
             Y_res = Y_sub - f0
 
             Y_em1, Y_res, C1 = _fit_first_order(
-                B1_sub, Y_res, m1, n1, maxiter, lambdax,
+                B1_sub,
+                Y_res,
+                m1,
+                n1,
+                maxiter,
+                lambdax,
             )
             Y_em2, Y_res, C2 = _fit_higher_order(
-                B2_sub, Y_res, n2, m2, lambdax,
+                B2_sub,
+                Y_res,
+                n2,
+                m2,
+                lambdax,
             )
             Y_em3, _, C3 = _fit_higher_order(
-                B3_sub, Y_res, n3, m3, lambdax,
+                B3_sub,
+                Y_res,
+                n3,
+                m3,
+                lambdax,
             )
             Y_em = jnp.concatenate([Y_em1, Y_em2, Y_em3], axis=1)
 
             S, Sa, Sb = _ancova(Y_sub, Y_em, V_Y)
             select = _f_test(
-                Y_sub, f0, Y_em, R, m1, m2, m3, n1, n2, n3, n, f_crits,
+                Y_sub,
+                f0,
+                Y_em,
+                R,
+                m1,
+                m2,
+                m3,
+                n1,
+                n2,
+                n3,
+                n,
+                f_crits,
             )
             Y_pred = f0 + jnp.sum(Y_em, axis=1)
             rmse = jnp.sqrt(jnp.mean(jnp.square(Y_sub - Y_pred)))
