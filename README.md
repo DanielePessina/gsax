@@ -2,6 +2,8 @@
 
 **Global Sensitivity Analysis in JAX**
 
+**[Documentation](https://danielepessina.github.io/gsax/)**
+
 `gsax` computes variance-based sensitivity indices entirely in JAX, giving you GPU/TPU acceleration and JIT compilation for free. It provides two complementary methods: **Sobol indices** (via Saltelli sampling) and **RS-HDMR** (surrogate-based, works with any input-output pairs).
 
 ## Features
