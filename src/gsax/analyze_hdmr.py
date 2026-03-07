@@ -6,8 +6,11 @@ for prediction with the fitted surrogate.
 """
 
 import itertools
+from functools import lru_cache
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from gsax._hdmr import (
@@ -18,7 +21,7 @@ from gsax._hdmr import (
     _make_hdmr_kernel,
 )
 from gsax.problem import Problem
-from gsax.results_hdmr import HDMRResult
+from gsax.results_hdmr import HDMREmulator, HDMRResult
 
 
 def _normalize_X(X: Array, problem: Problem) -> Array:
@@ -29,24 +32,64 @@ def _normalize_X(X: Array, problem: Problem) -> Array:
     return (X - lo) / (hi - lo)
 
 
-def _build_terms(D: int, maxorder: int) -> tuple:
-    """Build parameter combination arrays and term labels."""
-    c1 = list(range(D))
+@lru_cache(maxsize=None)
+def _get_hdmr_static_data(D: int, maxorder: int, m: int) -> tuple:
+    """Cache host-side HDMR term metadata and basis index tables."""
+    c1 = tuple(range(D))
+    c2 = tuple(itertools.combinations(range(D), 2)) if maxorder >= 2 else tuple()
+    c3 = tuple(itertools.combinations(range(D), 3)) if maxorder >= 3 else tuple()
     n1 = D
-    c2, c3 = [], []
-    n2, n3 = 0, 0
-    if maxorder >= 2:
-        c2 = list(itertools.combinations(range(D), 2))
-        n2 = len(c2)
-    if maxorder >= 3:
-        c3 = list(itertools.combinations(range(D), 3))
-        n3 = len(c3)
+    n2 = len(c2)
+    n3 = len(c3)
     n = n1 + n2 + n3
-    return c1, c2, c3, n1, n2, n3, n
+    m1 = m + 3
+    m2 = m1**2
+    m3 = m1**3
+    beta2 = (
+        np.asarray(list(itertools.product(range(m1), repeat=2)), dtype=np.int32)
+        if n2 > 0
+        else np.zeros((0, 2), dtype=np.int32)
+    )
+    beta3 = (
+        np.asarray(list(itertools.product(range(m1), repeat=3)), dtype=np.int32)
+        if n3 > 0
+        else np.zeros((0, 3), dtype=np.int32)
+    )
+    return c1, c2, c3, n1, n2, n3, n, m1, m2, m3, beta2, beta3
+
+
+@lru_cache(maxsize=None)
+def _get_batched_hdmr_kernel(
+    D: int,
+    maxorder: int,
+    m: int,
+    maxiter: int,
+    lambdax: float,
+    N: int,
+):
+    """Cache the final batched HDMR wrapper by semantic signature."""
+    _, _, _, n1, n2, n3, n, m1, m2, m3, _, _ = _get_hdmr_static_data(D, maxorder, m)
+    kernel = _make_hdmr_kernel(
+        maxorder,
+        m1,
+        n1,
+        maxiter,
+        m2,
+        m3,
+        n2,
+        n3,
+        n,
+        lambdax,
+        N,
+    )
+    return jax.jit(jax.vmap(kernel, in_axes=(None, None, None, 0, None)))
 
 
 def _build_term_labels(
-    problem: Problem, c1: list, c2: list, c3: list,
+    problem: Problem,
+    c1: tuple[int, ...],
+    c2: tuple[tuple[int, int], ...],
+    c3: tuple[tuple[int, int, int], ...],
 ) -> tuple[str, ...]:
     """Build human-readable term labels."""
     names = problem.names
@@ -57,21 +100,23 @@ def _build_term_labels(
 
 
 def _compute_ST(
-    S: Array, c1: list, c2: list, c3: list, D: int,
+    S: Array,
+    c2: Array,
+    c3: Array,
+    n1: int,
 ) -> Array:
     """Compute total-order indices by summing S over terms involving each param."""
-    n1 = len(c1)
-    ST = S[:n1]  # First order: term r = parameter r
+    ST = S[..., :n1]  # First order terms map 1:1 to parameters.
 
-    offset = n1
-    for j, (a, b) in enumerate(c2):
-        ST = ST.at[a].add(S[offset + j])
-        ST = ST.at[b].add(S[offset + j])
+    n2 = c2.shape[0]
+    S2 = S[..., n1 : n1 + n2]
+    ST = ST.at[..., c2[:, 0]].add(S2)
+    ST = ST.at[..., c2[:, 1]].add(S2)
 
-    offset = n1 + len(c2)
-    for j, combo in enumerate(c3):
-        for p in combo:
-            ST = ST.at[p].add(S[offset + j])
+    S3 = S[..., n1 + n2 :]
+    ST = ST.at[..., c3[:, 0]].add(S3)
+    ST = ST.at[..., c3[:, 1]].add(S3)
+    ST = ST.at[..., c3[:, 2]].add(S3)
 
     return ST
 
@@ -91,8 +136,12 @@ def _prepare_Y(Y: Array) -> tuple[Array, bool, bool]:
 
 
 def _squeeze_hdmr(
-    Sa: Array, Sb: Array, S: Array, ST: Array,
-    squeeze_time: bool, squeeze_output: bool,
+    Sa: Array,
+    Sb: Array,
+    S: Array,
+    ST: Array,
+    squeeze_time: bool,
+    squeeze_output: bool,
 ) -> tuple:
     """Remove singleton T/K dims from HDMR result arrays."""
     arrays = [Sa, Sb, S, ST]
@@ -105,6 +154,23 @@ def _squeeze_hdmr(
     return tuple(arrays)
 
 
+def _reshape_emulator_value(
+    value: Array,
+    T: int,
+    K_out: int,
+    squeeze_time: bool,
+    squeeze_output: bool,
+) -> Array:
+    """Reshape flattened per-output emulator state back to the analyzed layout."""
+    value = value.reshape((T, K_out) + value.shape[1:])
+
+    if squeeze_time and squeeze_output:
+        return value[0, 0]
+    if squeeze_time:
+        return value[0]
+    return value
+
+
 def analyze_hdmr(
     problem: Problem,
     X: Array,
@@ -113,8 +179,8 @@ def analyze_hdmr(
     maxorder: int = 2,
     maxiter: int = 100,
     m: int = 2,
-    subsample_size: int | None = None,
     lambdax: float = 0.01,
+    chunk_size: int = 2048,
 ) -> HDMRResult:
     """Compute sensitivity indices via RS-HDMR with B-spline surrogate modelling.
 
@@ -126,12 +192,14 @@ def analyze_hdmr(
     Args:
         problem: Parameter names and bounds.
         X: (N, D) input samples.
-        Y: (N,), (N, K), or (N, T, K) model outputs.
+        Y: (N,), (N, K), or (N, T, K) model outputs. A 2D array is always
+            interpreted as (N, K); for time-series with a single output,
+            reshape to (N, T, 1).
         maxorder: Maximum HDMR expansion order (1, 2, or 3).
         maxiter: Maximum backfitting iterations for first-order terms.
         m: Number of B-spline intervals (basis size = m + 3 per dimension).
-        subsample_size: Subsample size R (default: use all N samples).
         lambdax: Tikhonov regularization parameter.
+        chunk_size: Maximum number of (T, K) output combos per vmap batch.
 
     Returns:
         HDMRResult with Sa, Sb, S, ST, emulator, etc.
@@ -141,109 +209,140 @@ def analyze_hdmr(
 
     N, D = X.shape
     if D != problem.num_vars:
-        raise ValueError(
-            f"X has {D} columns but problem defines {problem.num_vars} parameters"
-        )
+        raise ValueError(f"X has {D} columns but problem defines {problem.num_vars} parameters")
     if N < 300:
         raise ValueError(f"Need at least 300 samples, got {N}")
     if maxorder not in (1, 2, 3):
         raise ValueError(f"maxorder must be 1, 2, or 3, got {maxorder}")
     if D == 2 and maxorder > 2:
         raise ValueError("maxorder must be <= 2 when D = 2")
-
-    R = subsample_size if subsample_size is not None else N
+    if chunk_size < 1:
+        raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
+    lambdax = float(lambdax)
 
     # Build terms
-    c1, c2, c3, n1, n2, n3, n = _build_terms(D, maxorder)
+    c1, c2, c3, n1, n2, n3, n, m1, m2, m3, beta2_host, beta3_host = _get_hdmr_static_data(
+        D,
+        maxorder,
+        m,
+    )
     term_labels = _build_term_labels(problem, c1, c2, c3)
-    m1 = m + 3
-    m2 = m1 ** 2
-    m3 = m1 ** 3
+    c2_idx = jnp.asarray(c2, dtype=int) if n2 > 0 else jnp.zeros((0, 2), dtype=int)
+    c3_idx = jnp.asarray(c3, dtype=int) if n3 > 0 else jnp.zeros((0, 3), dtype=int)
+    beta2 = jnp.asarray(beta2_host, dtype=int)
+    beta3 = jnp.asarray(beta3_host, dtype=int)
 
     # Normalize X
     X_n = _normalize_X(X, problem)
 
     # Build B-spline bases
     B1 = _build_B1(X_n, m)  # (N, m1, D)
-    B2 = _build_B2(B1, jnp.array(c2, dtype=int), m1) if n2 > 0 else jnp.zeros((N, 1, 1))
-    B3 = _build_B3(B1, jnp.array(c3, dtype=int), m1) if n3 > 0 else jnp.zeros((N, 1, 1))
+    B2 = _build_B2(B1, c2_idx, beta2) if n2 > 0 else jnp.zeros((N, 1, 1))
+    B3 = _build_B3(B1, c3_idx, beta3) if n3 > 0 else jnp.zeros((N, 1, 1))
 
     # Precompute F critical values
-    f_crits = _compute_f_crits(0.95, m1, m2, m3, R)
-
-    # Use all samples
-    indices = jnp.arange(N)
+    f_crits = _compute_f_crits(0.95, m1, m2, m3, N)
 
     # Promote Y to 3D
     Y_3d, squeeze_time, squeeze_output = _prepare_Y(Y)
     _, T, K_out = Y_3d.shape
 
-    # Create kernel (JIT-compiled, all sizes captured in closure)
-    kernel = _make_hdmr_kernel(
-        maxorder, m1, n1, maxiter, m2, m3, n2, n3, n, lambdax, R,
-    )
+    Y_flat = Y_3d.transpose(1, 2, 0).reshape(T * K_out, N)
+    total = T * K_out
+    cs = min(chunk_size, total)
 
-    # Accumulators for all (t, k) combos
-    Sa_all, Sb_all, S_all, ST_all = [], [], [], []
+    sa_parts, sb_parts, s_parts, rmse_parts = [], [], [], []
+    c1_parts, c2_parts, c3_parts, f0_parts = [], [], [], []
     select_sum = jnp.zeros(n)
-    rmse_all = []
-    C1_sum = jnp.zeros((m1, n1))
-    C2_sum = jnp.zeros((m2, n2)) if n2 > 0 else jnp.zeros((1, 1))
-    C3_sum = jnp.zeros((m3, n3)) if n3 > 0 else jnp.zeros((1, 1))
-    f0_sum = 0.0
-    n_fits = 0
 
-    for t in range(T):
-        for k in range(K_out):
-            Y_tk = Y_3d[:, t, k]  # (N,)
-
-            B1_sub = B1[indices]
-            B2_sub = B2[indices] if n2 > 0 else jnp.zeros((R, 1, 1))
-            B3_sub = B3[indices] if n3 > 0 else jnp.zeros((R, 1, 1))
-            Y_sub = Y_tk[indices]
-
-            sa, sb, s, sel, rmse_val, c1_coef, c2_coef, c3_coef, f0_val = kernel(
-                B1_sub, B2_sub, B3_sub, Y_sub, f_crits,
-            )
-
-            Sa_all.append(sa)
-            Sb_all.append(sb)
-            S_all.append(s)
-            ST_all.append(_compute_ST(s, c1, c2, c3, D))
-
-            select_sum = select_sum + sel
-            rmse_all.append(rmse_val)
-
-            C1_sum = C1_sum + c1_coef
-            if n2 > 0:
-                C2_sum = C2_sum + c2_coef
-            if n3 > 0:
-                C3_sum = C3_sum + c3_coef
-            f0_sum = f0_sum + float(f0_val)
-            n_fits += 1
+    batched_kernel = _get_batched_hdmr_kernel(
+        D,
+        maxorder,
+        m,
+        maxiter,
+        lambdax,
+        N,
+    )
+    for start in range(0, total, cs):
+        end = min(start + cs, total)
+        sa, sb, s, sel, rmse_val, c1_coef, c2_coef, c3_coef, f0_val = batched_kernel(
+            B1,
+            B2,
+            B3,
+            Y_flat[start:end],
+            f_crits,
+        )
+        sa_parts.append(sa)
+        sb_parts.append(sb)
+        s_parts.append(s)
+        rmse_parts.append(rmse_val)
+        c1_parts.append(c1_coef)
+        f0_parts.append(f0_val)
+        select_sum = select_sum + jnp.sum(sel, axis=0)
+        if n2 > 0:
+            c2_parts.append(c2_coef)
+        if n3 > 0:
+            c3_parts.append(c3_coef)
 
     # Reshape to (T, K, n_terms) / (T, K, D)
-    Sa_out = jnp.stack(Sa_all).reshape(T, K_out, n)
-    Sb_out = jnp.stack(Sb_all).reshape(T, K_out, n)
-    S_out = jnp.stack(S_all).reshape(T, K_out, n)
-    ST_out = jnp.stack(ST_all).reshape(T, K_out, D)
+    Sa_out = jnp.concatenate(sa_parts).reshape(T, K_out, n)
+    Sb_out = jnp.concatenate(sb_parts).reshape(T, K_out, n)
+    S_out = jnp.concatenate(s_parts).reshape(T, K_out, n)
+    ST_out = _compute_ST(S_out, c2_idx, c3_idx, n1)
 
     # Squeeze
     Sa_out, Sb_out, S_out, ST_out = _squeeze_hdmr(
-        Sa_out, Sb_out, S_out, ST_out,
-        squeeze_time, squeeze_output,
+        Sa_out,
+        Sb_out,
+        S_out,
+        ST_out,
+        squeeze_time,
+        squeeze_output,
+    )
+
+    C1_out = _reshape_emulator_value(
+        jnp.concatenate(c1_parts),
+        T,
+        K_out,
+        squeeze_time,
+        squeeze_output,
+    )
+    C2_out = None
+    C3_out = None
+    if n2 > 0:
+        C2_out = _reshape_emulator_value(
+            jnp.concatenate(c2_parts),
+            T,
+            K_out,
+            squeeze_time,
+            squeeze_output,
+        )
+    if n3 > 0:
+        C3_out = _reshape_emulator_value(
+            jnp.concatenate(c3_parts),
+            T,
+            K_out,
+            squeeze_time,
+            squeeze_output,
+        )
+    f0_out = _reshape_emulator_value(
+        jnp.concatenate(f0_parts),
+        T,
+        K_out,
+        squeeze_time,
+        squeeze_output,
     )
 
     # Build emulator dict
-    emulator = {
-        "C1": C1_sum / n_fits,
-        "C2": C2_sum / n_fits if n2 > 0 else None,
-        "C3": C3_sum / n_fits if n3 > 0 else None,
-        "f0": f0_sum / n_fits,
+    emulator: HDMREmulator = {
+        "C1": C1_out,
+        "C2": C2_out,
+        "C3": C3_out,
+        "f0": f0_out,
         "m": m,
         "maxorder": maxorder,
-        "c2": c2,
-        "c3": c3,
+        "c2": list(c2),
+        "c3": list(c3),
     }
 
     return HDMRResult(
@@ -255,19 +354,41 @@ def analyze_hdmr(
         terms=term_labels,
         emulator=emulator,
         select=select_sum,
-        rmse=jnp.stack(rmse_all) if rmse_all else None,
+        rmse=_reshape_emulator_value(
+            jnp.concatenate(rmse_parts),
+            T,
+            K_out,
+            squeeze_time,
+            squeeze_output,
+        ),
     )
+
+
+def _emulator_contract(B: Array, C: Array) -> Array:
+    """Contract basis B (N, m, j) with coefficients C, summing over terms.
+
+    Dispatches on C.ndim to handle scalar (m, j), multi-output (K, m, j),
+    and time-series (T, K, m, j) coefficient layouts.
+    """
+    if C.ndim == 2:
+        return jnp.sum(jnp.einsum("rmj,mj->rj", B, C), axis=1)
+    if C.ndim == 3:
+        return jnp.sum(jnp.einsum("rmj,kmj->rkj", B, C), axis=2)
+    return jnp.sum(jnp.einsum("rmj,tkmj->rtkj", B, C), axis=3)
 
 
 def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
     """Predict at new input points using the fitted HDMR surrogate.
+
+    Note: This function is not JIT-compatible because ``HDMRResult`` is not a
+    registered JAX pytree type.
 
     Args:
         result: HDMRResult from ``analyze_hdmr`` (must have ``emulator`` set).
         X_new: (N_new, D) new input points within the problem bounds.
 
     Returns:
-        Y_pred: (N_new,) predicted outputs.
+        Y_pred: (N_new,), (N_new, K), or (N_new, T, K) predicted outputs.
     """
     em = result.emulator
     if em is None:
@@ -277,21 +398,38 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
     maxorder = em["maxorder"]
     C1 = em["C1"]
     f0 = em["f0"]
-    m1 = em["m"] + 3
 
     # Normalize
     X_n = _normalize_X(X_new, result.problem)
 
     # Build bases and compute predictions
     B1 = _build_B1(X_n, em["m"])  # (N_new, m1, D)
-    Y_total = jnp.sum(jnp.einsum('rmj,mj->rj', B1, C1), axis=1)
+    Y_total = _emulator_contract(B1, C1)
 
     if maxorder >= 2 and em["C2"] is not None:
-        B2 = _build_B2(B1, jnp.array(em["c2"], dtype=int), m1)
-        Y_total = Y_total + jnp.sum(jnp.einsum('rmj,mj->rj', B2, em["C2"]), axis=1)
+        _, _, _, _, _, _, _, _, _, _, beta2_host, _ = _get_hdmr_static_data(
+            result.problem.num_vars,
+            maxorder,
+            em["m"],
+        )
+        B2 = _build_B2(
+            B1,
+            jnp.asarray(em["c2"], dtype=int),
+            jnp.asarray(beta2_host, dtype=int),
+        )
+        Y_total = Y_total + _emulator_contract(B2, em["C2"])
 
     if maxorder >= 3 and em["C3"] is not None:
-        B3 = _build_B3(B1, jnp.array(em["c3"], dtype=int), m1)
-        Y_total = Y_total + jnp.sum(jnp.einsum('rmj,mj->rj', B3, em["C3"]), axis=1)
+        _, _, _, _, _, _, _, _, _, _, _, beta3_host = _get_hdmr_static_data(
+            result.problem.num_vars,
+            maxorder,
+            em["m"],
+        )
+        B3 = _build_B3(
+            B1,
+            jnp.asarray(em["c3"], dtype=int),
+            jnp.asarray(beta3_host, dtype=int),
+        )
+        Y_total = Y_total + _emulator_contract(B3, em["C3"])
 
     return Y_total + f0

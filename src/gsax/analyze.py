@@ -14,13 +14,31 @@ Array shape conventions used throughout:
     step — rows per Saltelli group: 2D+2 (second order) or D+2 (first only)
 """
 
+from functools import lru_cache
+
 import jax
 import jax.numpy as jnp
 from jax import Array, vmap
 
 from gsax._indices import first_order, second_order, total_order
 from gsax.results import SAResult
-from gsax.sampling import SamplingResult
+from gsax.sampling import SamplingResult, _saltelli_step
+
+
+@lru_cache(maxsize=None)
+def _get_no_bootstrap_batched_kernel(calc_second_order: bool):
+    """Cache final batched Sobol wrappers keyed only on order flag."""
+    if calc_second_order:
+        return jax.jit(jax.vmap(_kernel_second_order, in_axes=(0, 0, 0, 0)))
+    return jax.jit(jax.vmap(_kernel_first_total, in_axes=(0, 0, 0)))
+
+
+@lru_cache(maxsize=None)
+def _get_bootstrap_point_kernel(calc_second_order: bool):
+    """Cache bootstrap point-estimate kernels separately from no-bootstrap wrappers."""
+    if calc_second_order:
+        return jax.jit(_kernel_second_order)
+    return jax.jit(_kernel_first_total)
 
 
 def _drop_nonfinite(Y: Array, step: int) -> tuple[Array, int]:
@@ -45,7 +63,7 @@ def _drop_nonfinite(Y: Array, step: int) -> tuple[Array, int]:
     trailing = Y.shape[1:]
 
     # Reshape from flat rows into groups: (n_total, ...) -> (N, step, ...)
-    grouped = Y[:base_n * step].reshape(base_n, step, *trailing)
+    grouped = Y[: base_n * step].reshape(base_n, step, *trailing)
 
     # Flatten each group to a single vector for finiteness check:
     # (N, step, ...) -> (N, step * prod(...)), then reduce along axis=1
@@ -57,6 +75,7 @@ def _drop_nonfinite(Y: Array, step: int) -> tuple[Array, int]:
     if n_dropped > 0:
         # Use NumPy for boolean indexing (not supported by JAX tracing)
         import numpy as np
+
         mask_np = np.asarray(finite_mask)
         grouped_clean = jnp.asarray(np.asarray(grouped)[mask_np])
         # grouped_clean: (N_good, step, ...) -> flatten back to row-major
@@ -67,7 +86,9 @@ def _drop_nonfinite(Y: Array, step: int) -> tuple[Array, int]:
 
 
 def _count_and_report_nans(
-    S1: Array, ST: Array, S2: Array | None,
+    S1: Array,
+    ST: Array,
+    S2: Array | None,
 ) -> dict[str, int]:
     """Count NaN values in computed Sobol index arrays and warn if any exist.
 
@@ -161,9 +182,7 @@ def _kernel_first_total(A: Array, AB: Array, B: Array) -> tuple[Array, Array]:
     return S1, ST
 
 
-def _kernel_second_order(
-    A: Array, AB: Array, BA: Array, B: Array
-) -> tuple[Array, Array, Array]:
+def _kernel_second_order(A: Array, AB: Array, BA: Array, B: Array) -> tuple[Array, Array, Array]:
     """Jittable kernel for first-, total-, and second-order Sobol indices.
 
     Second-order indices S2[j, k] measure the interaction effect between
@@ -191,6 +210,7 @@ def _kernel_second_order(
 
     def s2_row(j):
         """Compute one row of the S2 matrix: S2[j, :] for all k."""
+
         def s2_elem(k):
             # Each call uses AB[:,j] (N,), AB[:,k] (N,), BA[:,j] (N,)
             return second_order(A, AB[:, j], AB[:, k], BA[:, j], B)
@@ -260,9 +280,23 @@ def _prepare_Y(
     return Y, squeeze_time, squeeze_output
 
 
+def _expand_unique_outputs(sampling_result: SamplingResult, Y: Array) -> Array:
+    """Rebuild expanded Saltelli outputs from unique user-evaluated outputs."""
+    if Y.shape[0] != sampling_result.n_total:
+        raise ValueError(
+            f"Y.shape[0] must match sampling_result.n_total ({sampling_result.n_total}), "
+            f"got {Y.shape[0]}"
+        )
+    expanded_to_unique = jnp.asarray(sampling_result.expanded_to_unique)
+    return jnp.take(Y, expanded_to_unique, axis=0)
+
+
 def _squeeze_results(
-    S1: Array, ST: Array, S2: Array | None,
-    squeeze_time: bool, squeeze_output: bool,
+    S1: Array,
+    ST: Array,
+    S2: Array | None,
+    squeeze_time: bool,
+    squeeze_output: bool,
     S1_conf: Array | None = None,
     ST_conf: Array | None = None,
     S2_conf: Array | None = None,
@@ -350,18 +384,18 @@ def _analyze_no_bootstrap(
     Y, squeeze_time, squeeze_output = _prepare_Y(Y)
     # Y: (N * step, T, K) after promotion
     D = sampling_result.n_params
-    base_n = sampling_result.base_n
     calc_second_order = sampling_result.calc_second_order
 
     _, T, K = Y.shape  # Y is now guaranteed 3-D
     A, B, AB, BA = _separate_output_values(Y, D, calc_second_order)
+    base_n = A.shape[0]
     # A: (N, T, K), B: (N, T, K), AB: (N, D, T, K), BA: (N, D, T, K) or None
 
     # Reshape so the batch dim is T*K (all output combos) and the sample dim
     # is N, matching the kernel signatures which expect (N,) and (N, D).
     # transpose: (N, T, K) -> (T, K, N) then flatten -> (T*K, N)
-    A_flat = A.transpose(1, 2, 0).reshape(T * K, base_n)     # (T*K, N)
-    B_flat = B.transpose(1, 2, 0).reshape(T * K, base_n)     # (T*K, N)
+    A_flat = A.transpose(1, 2, 0).reshape(T * K, base_n)  # (T*K, N)
+    B_flat = B.transpose(1, 2, 0).reshape(T * K, base_n)  # (T*K, N)
     # transpose: (N, D, T, K) -> (T, K, N, D) then flatten -> (T*K, N, D)
     AB_flat = AB.transpose(2, 3, 0, 1).reshape(T * K, base_n, D)  # (T*K, N, D)
 
@@ -374,15 +408,17 @@ def _analyze_no_bootstrap(
         assert BA is not None
         # Same reshape as AB: (N, D, T, K) -> (T*K, N, D)
         BA_flat = BA.transpose(2, 3, 0, 1).reshape(T * K, base_n, D)  # (T*K, N, D)
-        batched = jax.jit(jax.vmap(_kernel_second_order, in_axes=(0, 0, 0, 0)))
 
+        batched = _get_no_bootstrap_batched_kernel(True)
         s1_parts, st_parts, s2_parts = [], [], []
         for start in range(0, total, cs):
             end = min(start + cs, total)
             # Each chunk slice: A_flat[start:end] is (chunk, N), etc.
             s1, st, s2 = batched(
-                A_flat[start:end], AB_flat[start:end],
-                BA_flat[start:end], B_flat[start:end],
+                A_flat[start:end],
+                AB_flat[start:end],
+                BA_flat[start:end],
+                B_flat[start:end],
             )
             # s1, st: (chunk, D); s2: (chunk, D, D)
             s1_parts.append(s1)
@@ -390,19 +426,20 @@ def _analyze_no_bootstrap(
             s2_parts.append(s2)
 
         # Concatenate chunks and reshape back to (T, K, ...)
-        S1_out = jnp.concatenate(s1_parts).reshape(T, K, D)      # (T, K, D)
-        ST_out = jnp.concatenate(st_parts).reshape(T, K, D)      # (T, K, D)
+        S1_out = jnp.concatenate(s1_parts).reshape(T, K, D)  # (T, K, D)
+        ST_out = jnp.concatenate(st_parts).reshape(T, K, D)  # (T, K, D)
         S2_out = _normalize_s2_matrix(
-            jnp.concatenate(s2_parts).reshape(T, K, D, D)        # (T, K, D, D)
+            jnp.concatenate(s2_parts).reshape(T, K, D, D)  # (T, K, D, D)
         )
     else:
-        batched = jax.jit(jax.vmap(_kernel_first_total, in_axes=(0, 0, 0)))
-
+        batched = _get_no_bootstrap_batched_kernel(False)
         s1_parts, st_parts = [], []
         for start in range(0, total, cs):
             end = min(start + cs, total)
             s1, st = batched(
-                A_flat[start:end], AB_flat[start:end], B_flat[start:end],
+                A_flat[start:end],
+                AB_flat[start:end],
+                B_flat[start:end],
             )
             # s1, st: (chunk, D)
             s1_parts.append(s1)
@@ -418,7 +455,10 @@ def _analyze_no_bootstrap(
     )
     nan_counts = _count_and_report_nans(S1_out, ST_out, S2_out)
     return SAResult(
-        S1=S1_out, ST=ST_out, S2=S2_out, problem=sampling_result.problem,
+        S1=S1_out,
+        ST=ST_out,
+        S2=S2_out,
+        problem=sampling_result.problem,
         nan_counts=nan_counts,
     )
 
@@ -456,11 +496,11 @@ def _analyze_bootstrap(
     Y, squeeze_time, squeeze_output = _prepare_Y(Y)
     # Y: (N * step, T, K)
     D = sampling_result.n_params
-    base_n = sampling_result.base_n
     calc_second_order = sampling_result.calc_second_order
 
     _, T, K = Y.shape
     A, B, AB, BA = _separate_output_values(Y, D, calc_second_order)
+    base_n = A.shape[0]
     # A: (N, T, K), B: (N, T, K), AB: (N, D, T, K), BA: (N, D, T, K) or None
 
     # Generate bootstrap resample indices once, shared across all (t, k) combos.
@@ -472,10 +512,9 @@ def _analyze_bootstrap(
     alpha = (1.0 - conf_level) / 2.0
     percentiles = jnp.array([alpha * 100, (1.0 - alpha) * 100])  # (2,)
 
-    # Pre-JIT the point-estimate kernels; shapes are identical across (t, k)
-    # iterations so each kernel is traced/compiled only once.
-    jit_ft = jax.jit(_kernel_first_total)
-    jit_so = jax.jit(_kernel_second_order) if calc_second_order else None
+    # Cache point-estimate kernels separately from the no-bootstrap batched wrappers.
+    jit_ft = _get_bootstrap_point_kernel(False)
+    jit_so = _get_bootstrap_point_kernel(True) if calc_second_order else None
 
     # Accumulators — each list collects T*K items (one per output combo)
     S1_list, ST_list = [], []
@@ -486,8 +525,8 @@ def _analyze_bootstrap(
     for t in range(T):
         for k in range(K):
             # Extract 1-D sample vectors for this specific (t, k) output
-            a = A[:, t, k]       # (N,)
-            b = B[:, t, k]       # (N,)
+            a = A[:, t, k]  # (N,)
+            b = B[:, t, k]  # (N,)
             ab = AB[:, :, t, k]  # (N, D)
 
             if calc_second_order:
@@ -510,9 +549,7 @@ def _analyze_bootstrap(
                 # Point estimates: s1 (D,), st (D,)
                 s1, st = jit_ft(a, ab, b)
                 # Bootstrap: s1_boot (R, D), st_boot (R, D)
-                s1_boot, st_boot = _bootstrap_first_total(
-                    indices, a, ab, b, chunk_size
-                )
+                s1_boot, st_boot = _bootstrap_first_total(indices, a, ab, b, chunk_size)
 
             S1_list.append(s1)  # (D,)
             ST_list.append(st)  # (D,)
@@ -530,14 +567,18 @@ def _analyze_bootstrap(
     ST_out = jnp.stack(ST_list).reshape(T, K, D)  # (T*K, D) -> (T, K, D)
 
     # Stack lo/hi bounds into a (2, T, K, D) confidence array
-    S1_conf = jnp.stack([
-        jnp.stack(S1_lo_list).reshape(T, K, D),
-        jnp.stack(S1_hi_list).reshape(T, K, D),
-    ])  # (2, T, K, D)
-    ST_conf = jnp.stack([
-        jnp.stack(ST_lo_list).reshape(T, K, D),
-        jnp.stack(ST_hi_list).reshape(T, K, D),
-    ])  # (2, T, K, D)
+    S1_conf = jnp.stack(
+        [
+            jnp.stack(S1_lo_list).reshape(T, K, D),
+            jnp.stack(S1_hi_list).reshape(T, K, D),
+        ]
+    )  # (2, T, K, D)
+    ST_conf = jnp.stack(
+        [
+            jnp.stack(ST_lo_list).reshape(T, K, D),
+            jnp.stack(ST_hi_list).reshape(T, K, D),
+        ]
+    )  # (2, T, K, D)
 
     if calc_second_order:
         # (T*K, D, D) -> (T, K, D, D), then normalise
@@ -545,10 +586,12 @@ def _analyze_bootstrap(
         # Stack lo/hi: each list has T*K items of shape (D, D)
         # -> (2, T, K, D, D), then normalise
         S2_conf = _normalize_s2_matrix(
-            jnp.stack([
-                jnp.stack(S2_lo_list).reshape(T, K, D, D),
-                jnp.stack(S2_hi_list).reshape(T, K, D, D),
-            ])  # (2, T, K, D, D)
+            jnp.stack(
+                [
+                    jnp.stack(S2_lo_list).reshape(T, K, D, D),
+                    jnp.stack(S2_hi_list).reshape(T, K, D, D),
+                ]
+            )  # (2, T, K, D, D)
         )
     else:
         S2_out = None
@@ -556,13 +599,24 @@ def _analyze_bootstrap(
 
     # Remove singleton T and/or K dimensions to match original Y shape
     S1_out, ST_out, S2_out, S1_conf, ST_conf, S2_conf = _squeeze_results(
-        S1_out, ST_out, S2_out, squeeze_time, squeeze_output,
-        S1_conf, ST_conf, S2_conf,
+        S1_out,
+        ST_out,
+        S2_out,
+        squeeze_time,
+        squeeze_output,
+        S1_conf,
+        ST_conf,
+        S2_conf,
     )
     nan_counts = _count_and_report_nans(S1_out, ST_out, S2_out)
     return SAResult(
-        S1=S1_out, ST=ST_out, S2=S2_out, problem=sampling_result.problem,
-        S1_conf=S1_conf, ST_conf=ST_conf, S2_conf=S2_conf,
+        S1=S1_out,
+        ST=ST_out,
+        S2=S2_out,
+        problem=sampling_result.problem,
+        S1_conf=S1_conf,
+        ST_conf=ST_conf,
+        S2_conf=S2_conf,
         nan_counts=nan_counts,
     )
 
@@ -579,19 +633,20 @@ def analyze(
     """Compute Sobol sensitivity indices from model outputs using JAX.
 
     This is the main entry point. It accepts model outputs Y evaluated at the
-    Saltelli sample points produced by ``gsax.sample()``, cleans non-finite
-    values, and dispatches to either the fast no-bootstrap path or the
-    bootstrap path depending on ``num_resamples``.
+    unique rows returned by ``gsax.sample()``, reconstructs the expanded
+    Saltelli ordering internally, cleans non-finite values, and dispatches to
+    either the fast no-bootstrap path or the bootstrap path depending on
+    ``num_resamples``.
 
     Args:
-        sampling_result: Result from ``gsax.sample()`` containing sample
-            matrix metadata (N, D, calc_second_order, problem definition).
-        Y: Model outputs evaluated at each row of
+        sampling_result: Result from ``gsax.sample()`` containing the unique
+            sample matrix plus expansion metadata.
+        Y: Model outputs evaluated at each unique row of
             ``sampling_result.samples``. Accepted shapes:
                 (n_total,)       — scalar output, single time step
                 (n_total, K)     — K outputs, single time step
                 (n_total, T, K)  — K outputs over T time steps
-            where n_total = N * step.
+            where ``n_total`` is the unique row count.
         num_resamples: R, the number of bootstrap resamples for confidence
             intervals. Set to 0 (default) to skip bootstrap.
         conf_level: Confidence level for bootstrap CIs (default 0.95).
@@ -609,31 +664,27 @@ def analyze(
             S1_conf, ST_conf, S2_conf — (2, ...) CI bounds or None
     """
     Y = jnp.asarray(Y)
+    Y = _expand_unique_outputs(sampling_result, Y)
 
     D = sampling_result.n_params
-    step = 2 * D + 2 if sampling_result.calc_second_order else D + 2
+    step = _saltelli_step(D, sampling_result.calc_second_order)
 
     # Clean non-finite outputs by dropping entire Saltelli groups
     Y, n_dropped = _drop_nonfinite(Y, step)
     if n_dropped > 0:
         total_groups = Y.shape[0] // step + n_dropped
-        print(f"gsax: dropped {n_dropped} of {total_groups} sample groups containing non-finite values")
+        print(
+            f"gsax: dropped {n_dropped} of {total_groups} sample groups containing non-finite values"
+        )
         if Y.shape[0] == 0:
             raise ValueError("All samples contain non-finite values")
-        # Rebuild sampling_result with the reduced base_n
-        sampling_result = SamplingResult(
-            samples=sampling_result.samples,
-            base_n=Y.shape[0] // step,
-            n_params=sampling_result.n_params,
-            calc_second_order=sampling_result.calc_second_order,
-            problem=sampling_result.problem,
-        )
 
     if num_resamples > 0:
         if key is None:
             raise ValueError("key is required when num_resamples > 0")
         return _analyze_bootstrap(
-            sampling_result, Y,
+            sampling_result,
+            Y,
             num_resamples=num_resamples,
             conf_level=conf_level,
             key=key,

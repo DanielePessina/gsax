@@ -1,10 +1,24 @@
 """Defines the HDMRResult dataclass for RS-HDMR sensitivity analysis results."""
 
 from dataclasses import dataclass
+from typing import TypedDict
 
 from jax import Array
 
 from gsax.problem import Problem
+
+
+class HDMREmulator(TypedDict):
+    """Typed emulator payload returned inside ``HDMRResult``."""
+
+    C1: Array
+    C2: Array | None
+    C3: Array | None
+    f0: Array
+    m: int
+    maxorder: int
+    c2: list[tuple[int, int]]
+    c3: list[tuple[int, int, int]]
 
 
 @dataclass
@@ -21,15 +35,17 @@ class HDMRResult:
     than 3 dimensions.
     """
 
-    Sa: Array       # (n_terms,) or (K, n_terms) or (T, K, n_terms)
-    Sb: Array       # correlative contribution, same shape as Sa
-    S: Array        # total contribution per term (Sa + Sb)
-    ST: Array       # (D,) or (K, D) or (T, K, D) total-order per parameter
+    Sa: Array  # (n_terms,) or (K, n_terms) or (T, K, n_terms)
+    Sb: Array  # correlative contribution, same shape as Sa
+    S: Array  # total contribution per term (Sa + Sb)
+    ST: Array  # (D,) or (K, D) or (T, K, D) total-order per parameter
     problem: Problem
     terms: tuple[str, ...]  # ("x1", "x2", "x1/x2", ...) term labels
-    emulator: dict | None = None  # fitted coefficients for prediction
-    select: Array | None = None   # (n_terms,) F-test selection counts
-    rmse: Array | None = None     # emulator RMSE
+    emulator: HDMREmulator | None = (
+        None  # fitted coefficients, matching scalar/multi-output layout
+    )
+    select: Array | None = None  # (n_terms,) F-test selection counts
+    rmse: Array | None = None  # (), (K,), or (T, K) emulator RMSE
 
     @property
     def S1(self) -> Array:

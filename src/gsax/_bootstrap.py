@@ -46,6 +46,7 @@ def _resample_ft(idx_chunk: Array, A: Array, AB: Array, B: Array):
         S1: (C, D) first-order indices per resample.
         ST: (C, D) total-order indices per resample.
     """
+
     def single(idx):
         # idx: (N,) — one set of resampled row indices
         # A[idx]: (N,), AB[idx]: (N, D), B[idx]: (N,)
@@ -74,6 +75,7 @@ def _resample_so(idx_chunk: Array, A: Array, AB: Array, BA: Array, B: Array):
         ST: (C, D)    total-order indices per resample.
         S2: (C, D, D) second-order indices per resample.
     """
+
     def single(idx):
         # idx: (N,) — gather resampled rows from all four output arrays
         # A[idx]: (N,), AB[idx]: (N, D), BA[idx]: (N, D), B[idx]: (N,)
@@ -153,7 +155,7 @@ def _bootstrap_second_order(
 
     # Concatenate chunks along the resample axis → (R, ...) for each output
     return (
-        jnp.concatenate(s1_parts),   # (R, D)
-        jnp.concatenate(st_parts),   # (R, D)
-        jnp.concatenate(s2_parts),   # (R, D, D)
+        jnp.concatenate(s1_parts),  # (R, D)
+        jnp.concatenate(st_parts),  # (R, D)
+        jnp.concatenate(s2_parts),  # (R, D, D)
     )

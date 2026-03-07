@@ -1,10 +1,15 @@
 [project]
 name = "gsax"
-version = "0.1.0"
+version = "0.2.0"
 description = "Global Sensitivity Analysis in JAX"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["jax>=0.4", "jaxlib>=0.4", "scipy>=1.10"]
+dependencies = [
+    "jax>=0.4",
+    "jaxlib>=0.4",
+    "pandas>=3.0.1",
+    "scipy>=1.10",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.4", "SALib>=1.4"]
