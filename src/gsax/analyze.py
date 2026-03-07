@@ -22,7 +22,7 @@ from jax import Array, vmap
 
 from gsax._indices import first_order, second_order, total_order
 from gsax.results import SAResult
-from gsax.sampling import SamplingResult
+from gsax.sampling import SamplingResult, _saltelli_step
 
 
 @lru_cache(maxsize=None)
@@ -278,6 +278,17 @@ def _prepare_Y(
     return Y, squeeze_time, squeeze_output
 
 
+def _expand_unique_outputs(sampling_result: SamplingResult, Y: Array) -> Array:
+    """Rebuild expanded Saltelli outputs from unique user-evaluated outputs."""
+    if Y.shape[0] != sampling_result.n_total:
+        raise ValueError(
+            f"Y.shape[0] must match sampling_result.n_total ({sampling_result.n_total}), "
+            f"got {Y.shape[0]}"
+        )
+    expanded_to_unique = jnp.asarray(sampling_result.expanded_to_unique)
+    return jnp.take(Y, expanded_to_unique, axis=0)
+
+
 def _squeeze_results(
     S1: Array, ST: Array, S2: Array | None,
     squeeze_time: bool, squeeze_output: bool,
@@ -368,11 +379,11 @@ def _analyze_no_bootstrap(
     Y, squeeze_time, squeeze_output = _prepare_Y(Y)
     # Y: (N * step, T, K) after promotion
     D = sampling_result.n_params
-    base_n = sampling_result.base_n
     calc_second_order = sampling_result.calc_second_order
 
     _, T, K = Y.shape  # Y is now guaranteed 3-D
     A, B, AB, BA = _separate_output_values(Y, D, calc_second_order)
+    base_n = A.shape[0]
     # A: (N, T, K), B: (N, T, K), AB: (N, D, T, K), BA: (N, D, T, K) or None
 
     # Reshape so the batch dim is T*K (all output combos) and the sample dim
@@ -473,11 +484,11 @@ def _analyze_bootstrap(
     Y, squeeze_time, squeeze_output = _prepare_Y(Y)
     # Y: (N * step, T, K)
     D = sampling_result.n_params
-    base_n = sampling_result.base_n
     calc_second_order = sampling_result.calc_second_order
 
     _, T, K = Y.shape
     A, B, AB, BA = _separate_output_values(Y, D, calc_second_order)
+    base_n = A.shape[0]
     # A: (N, T, K), B: (N, T, K), AB: (N, D, T, K), BA: (N, D, T, K) or None
 
     # Generate bootstrap resample indices once, shared across all (t, k) combos.
@@ -595,19 +606,20 @@ def analyze(
     """Compute Sobol sensitivity indices from model outputs using JAX.
 
     This is the main entry point. It accepts model outputs Y evaluated at the
-    Saltelli sample points produced by ``gsax.sample()``, cleans non-finite
-    values, and dispatches to either the fast no-bootstrap path or the
-    bootstrap path depending on ``num_resamples``.
+    unique rows returned by ``gsax.sample()``, reconstructs the expanded
+    Saltelli ordering internally, cleans non-finite values, and dispatches to
+    either the fast no-bootstrap path or the bootstrap path depending on
+    ``num_resamples``.
 
     Args:
-        sampling_result: Result from ``gsax.sample()`` containing sample
-            matrix metadata (N, D, calc_second_order, problem definition).
-        Y: Model outputs evaluated at each row of
+        sampling_result: Result from ``gsax.sample()`` containing the unique
+            sample matrix plus expansion metadata.
+        Y: Model outputs evaluated at each unique row of
             ``sampling_result.samples``. Accepted shapes:
                 (n_total,)       — scalar output, single time step
                 (n_total, K)     — K outputs, single time step
                 (n_total, T, K)  — K outputs over T time steps
-            where n_total = N * step.
+            where ``n_total`` is the unique row count.
         num_resamples: R, the number of bootstrap resamples for confidence
             intervals. Set to 0 (default) to skip bootstrap.
         conf_level: Confidence level for bootstrap CIs (default 0.95).
@@ -625,9 +637,10 @@ def analyze(
             S1_conf, ST_conf, S2_conf — (2, ...) CI bounds or None
     """
     Y = jnp.asarray(Y)
+    Y = _expand_unique_outputs(sampling_result, Y)
 
     D = sampling_result.n_params
-    step = 2 * D + 2 if sampling_result.calc_second_order else D + 2
+    step = _saltelli_step(D, sampling_result.calc_second_order)
 
     # Clean non-finite outputs by dropping entire Saltelli groups
     Y, n_dropped = _drop_nonfinite(Y, step)
@@ -636,14 +649,6 @@ def analyze(
         print(f"gsax: dropped {n_dropped} of {total_groups} sample groups containing non-finite values")
         if Y.shape[0] == 0:
             raise ValueError("All samples contain non-finite values")
-        # Rebuild sampling_result with the reduced base_n
-        sampling_result = SamplingResult(
-            samples=sampling_result.samples,
-            base_n=Y.shape[0] // step,
-            n_params=sampling_result.n_params,
-            calc_second_order=sampling_result.calc_second_order,
-            problem=sampling_result.problem,
-        )
 
     if num_resamples > 0:
         if key is None:

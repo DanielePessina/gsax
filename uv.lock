@@ -149,11 +149,12 @@ wheels = [
 
 [[package]]
 name = "gsax"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "jax" },
     { name = "jaxlib" },
+    { name = "pandas" },
     { name = "scipy" },
 ]
 
@@ -168,6 +169,7 @@ dev = [
 requires-dist = [
     { name = "jax", specifier = ">=0.4" },
     { name = "jaxlib", specifier = ">=0.4" },
+    { name = "pandas", specifier = ">=3.0.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "salib", marker = "extra == 'dev'", specifier = ">=1.4" },
