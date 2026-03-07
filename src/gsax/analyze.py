@@ -104,12 +104,12 @@ def _drop_nonfinite(Y: Array, step: int) -> tuple[Array, int]:
     return Y, 0
 
 
-def _count_and_report_nans(
+def _count_nans(
     S1: Array,
     ST: Array,
     S2: Array | None,
 ) -> dict[str, int]:
-    """Count NaN values in computed Sobol index arrays and warn if any exist."""
+    """Count NaN values in computed Sobol index arrays (no reporting)."""
     counts: dict[str, int] = {
         "S1": int(jnp.sum(jnp.isnan(S1))),
         "ST": int(jnp.sum(jnp.isnan(ST))),
@@ -117,11 +117,59 @@ def _count_and_report_nans(
     if S2 is not None:
         off_diag_mask = ~jnp.eye(S2.shape[-1], dtype=bool)
         counts["S2"] = int(jnp.sum(jnp.isnan(S2) & off_diag_mask))
-    total = sum(counts.values())
-    if total > 0:
-        parts = ", ".join(f"{k}: {v}" for k, v in counts.items())
-        print(f"gsax: {total} NaN indices in results ({parts})")
     return counts
+
+
+def _warn_zero_variance_slices(Y: Array) -> None:
+    """Check for zero-variance output slices before analysis and warn.
+
+    Y is in expanded Saltelli form with shape ``(n_expanded, ...)`` where
+    trailing dims are ``()``, ``(K,)``, or ``(T, K)``.  We check variance
+    across the sample axis for each output slice.
+    """
+    import warnings
+
+    # Collapse to (n_expanded, n_outputs)
+    flat = Y.reshape(Y.shape[0], -1)
+    n_outputs = flat.shape[1]
+
+    # Variance per output slice (across all expanded rows)
+    var_per_slice = jnp.var(flat, axis=0)
+    zero_mask = var_per_slice == 0
+    n_zero = int(jnp.sum(zero_mask))
+
+    if n_zero == 0:
+        return
+
+    if n_outputs == 1:
+        warnings.warn(
+            f"gsax: output has zero variance — all Sobol indices will be NaN",
+            stacklevel=4,
+        )
+        return
+
+    # Recover original shape labels
+    trailing = Y.shape[1:]
+    zero_indices = [int(i) for i in jnp.where(zero_mask)[0]]
+
+    if len(trailing) == 1:
+        # (K,) — list affected output indices
+        warnings.warn(
+            f"gsax: {n_zero}/{n_outputs} output(s) have zero variance "
+            f"(k={zero_indices}) — corresponding Sobol indices will be NaN",
+            stacklevel=4,
+        )
+    elif len(trailing) == 2:
+        K = trailing[1]
+        affected = []
+        for idx in zero_indices:
+            t, k = divmod(idx, K)
+            affected.append(f"(t={t},k={k})")
+        warnings.warn(
+            f"gsax: {n_zero}/{n_outputs} output slice(s) have zero variance "
+            f"{affected} — corresponding Sobol indices will be NaN",
+            stacklevel=4,
+        )
 
 
 def _separate_output_values(
@@ -297,7 +345,7 @@ def _analyze_no_bootstrap(
             S1_out, ST_out = kernel(a, ab, b)
             S2_out = None
 
-        nan_counts = _count_and_report_nans(S1_out, ST_out, S2_out)
+        nan_counts = _count_nans(S1_out, ST_out, S2_out)
         return SAResult(
             S1=S1_out,
             ST=ST_out,
@@ -358,7 +406,7 @@ def _analyze_no_bootstrap(
     S1_out, ST_out, S2_out, _, _, _ = _squeeze_results(
         S1_out, ST_out, S2_out, squeeze_time, squeeze_output
     )
-    nan_counts = _count_and_report_nans(S1_out, ST_out, S2_out)
+    nan_counts = _count_nans(S1_out, ST_out, S2_out)
     return SAResult(
         S1=S1_out,
         ST=ST_out,
@@ -474,7 +522,7 @@ def _analyze_bootstrap(
         ST_conf,
         S2_conf,
     )
-    nan_counts = _count_and_report_nans(S1_out, ST_out, S2_out)
+    nan_counts = _count_nans(S1_out, ST_out, S2_out)
     return SAResult(
         S1=S1_out,
         ST=ST_out,
@@ -537,12 +585,16 @@ def analyze(
 
     Y, n_dropped = _drop_nonfinite(Y, step)
     if n_dropped > 0:
+        import warnings
+
         total_groups = Y.shape[0] // step + n_dropped
-        print(
+        warnings.warn(
             f"gsax: dropped {n_dropped} of {total_groups} sample groups containing non-finite values"
         )
         if Y.shape[0] == 0:
             raise ValueError("All samples contain non-finite values")
+
+    _warn_zero_variance_slices(Y)
 
     if num_resamples > 0:
         if key is None:

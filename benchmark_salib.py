@@ -57,7 +57,7 @@ def coupled_oscillators(X: jax.Array, T: int, K: int) -> jax.Array:
     x3 = X[:, 3, None]
     x4 = X[:, 4, None]
 
-    t = jnp.linspace(0.0, 5.0, max(T, 2))[None, -T:]  # (1, T) — avoids t=0 degeneracy
+    t = jnp.linspace(0.1, 5.0, T)[None, :]  # (1, T) — start at 0.1 to avoid t=0 degeneracy
 
     y0 = x0 * jnp.sin(2 * jnp.pi * x1 * t) * jnp.exp(-x2 * t)
     y1 = x1 * jnp.cos(2 * jnp.pi * x0 * t) + x4 * t**2
@@ -311,7 +311,7 @@ SCENARIOS = [
 
 
 N_TIMING_ITERS = 5
-SOBOL_RESAMPLE_COUNTS = (0, 500)
+SOBOL_RESAMPLE_COUNTS = (0, 300)
 SOBOL_BOOTSTRAP_SEED = 123
 
 
