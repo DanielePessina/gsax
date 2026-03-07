@@ -93,3 +93,33 @@ def test_bootstrap_ci_contains_analytical(ishigami_bootstrap_result):
         assert ST_lo[i] <= expected <= ST_hi[i], (
             f"ST[{i}]: analytical {expected} not in CI [{ST_lo[i]}, {ST_hi[i]}]"
         )
+
+
+def test_repeated_no_bootstrap_calls_identical():
+    """Repeated identical no-bootstrap calls should return identical outputs."""
+    sr = gsax.sample(PROBLEM, n_samples=2**10, seed=7)
+    Y = evaluate(jnp.asarray(sr.samples))
+
+    first = gsax.analyze(sr, Y)
+    second = gsax.analyze(sr, Y)
+
+    np.testing.assert_allclose(first.S1, second.S1, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(first.ST, second.ST, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(first.S2, second.S2, rtol=1e-6, atol=1e-6, equal_nan=True)
+
+
+def test_repeated_bootstrap_calls_identical():
+    """Repeated identical bootstrap calls should preserve point estimates and CI shapes."""
+    sr = gsax.sample(PROBLEM, n_samples=2**10, seed=11)
+    Y = evaluate(jnp.asarray(sr.samples))
+    key = jax.random.key(123)
+
+    first = gsax.analyze(sr, Y, num_resamples=20, key=key)
+    second = gsax.analyze(sr, Y, num_resamples=20, key=key)
+
+    np.testing.assert_allclose(first.S1, second.S1, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(first.ST, second.ST, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(first.S2, second.S2, rtol=1e-6, atol=1e-6, equal_nan=True)
+    np.testing.assert_allclose(first.S1_conf, second.S1_conf, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(first.ST_conf, second.ST_conf, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(first.S2_conf, second.S2_conf, rtol=1e-6, atol=1e-6, equal_nan=True)

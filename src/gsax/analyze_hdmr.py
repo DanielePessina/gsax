@@ -6,6 +6,9 @@ for prediction with the fitted surrogate.
 """
 
 import itertools
+from functools import lru_cache
+
+import numpy as np
 
 import jax
 import jax.numpy as jnp
@@ -30,24 +33,51 @@ def _normalize_X(X: Array, problem: Problem) -> Array:
     return (X - lo) / (hi - lo)
 
 
-def _build_terms(D: int, maxorder: int) -> tuple:
-    """Build parameter combination arrays and term labels."""
-    c1 = list(range(D))
+@lru_cache(maxsize=None)
+def _get_hdmr_static_data(D: int, maxorder: int, m: int) -> tuple:
+    """Cache host-side HDMR term metadata and basis index tables."""
+    c1 = tuple(range(D))
+    c2 = tuple(itertools.combinations(range(D), 2)) if maxorder >= 2 else tuple()
+    c3 = tuple(itertools.combinations(range(D), 3)) if maxorder >= 3 else tuple()
     n1 = D
-    c2, c3 = [], []
-    n2, n3 = 0, 0
-    if maxorder >= 2:
-        c2 = list(itertools.combinations(range(D), 2))
-        n2 = len(c2)
-    if maxorder >= 3:
-        c3 = list(itertools.combinations(range(D), 3))
-        n3 = len(c3)
+    n2 = len(c2)
+    n3 = len(c3)
     n = n1 + n2 + n3
-    return c1, c2, c3, n1, n2, n3, n
+    m1 = m + 3
+    m2 = m1 ** 2
+    m3 = m1 ** 3
+    beta2 = (
+        np.asarray(list(itertools.product(range(m1), repeat=2)), dtype=np.int32)
+        if n2 > 0
+        else np.zeros((0, 2), dtype=np.int32)
+    )
+    beta3 = (
+        np.asarray(list(itertools.product(range(m1), repeat=3)), dtype=np.int32)
+        if n3 > 0
+        else np.zeros((0, 3), dtype=np.int32)
+    )
+    return c1, c2, c3, n1, n2, n3, n, m1, m2, m3, beta2, beta3
+
+
+@lru_cache(maxsize=None)
+def _get_batched_hdmr_kernel(
+    D: int,
+    maxorder: int,
+    m: int,
+    maxiter: int,
+    lambdax: float,
+    N: int,
+):
+    """Cache the final batched HDMR wrapper by semantic signature."""
+    _, _, _, n1, n2, n3, n, m1, m2, m3, _, _ = _get_hdmr_static_data(D, maxorder, m)
+    kernel = _make_hdmr_kernel(
+        maxorder, m1, n1, maxiter, m2, m3, n2, n3, n, lambdax, N,
+    )
+    return jax.jit(jax.vmap(kernel, in_axes=(None, None, None, 0, None)))
 
 
 def _build_term_labels(
-    problem: Problem, c1: list, c2: list, c3: list,
+    problem: Problem, c1: tuple[int, ...], c2: tuple[tuple[int, int], ...], c3: tuple[tuple[int, int, int], ...],
 ) -> tuple[str, ...]:
     """Build human-readable term labels."""
     names = problem.names
@@ -152,23 +182,25 @@ def analyze_hdmr(
         raise ValueError("maxorder must be <= 2 when D = 2")
     if chunk_size < 1:
         raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
+    lambdax = float(lambdax)
 
     # Build terms
-    c1, c2, c3, n1, n2, n3, n = _build_terms(D, maxorder)
+    c1, c2, c3, n1, n2, n3, n, m1, m2, m3, beta2_host, beta3_host = _get_hdmr_static_data(
+        D, maxorder, m,
+    )
     term_labels = _build_term_labels(problem, c1, c2, c3)
-    c2_idx = jnp.array(c2, dtype=int) if n2 > 0 else jnp.zeros((0, 2), dtype=int)
-    c3_idx = jnp.array(c3, dtype=int) if n3 > 0 else jnp.zeros((0, 3), dtype=int)
-    m1 = m + 3
-    m2 = m1 ** 2
-    m3 = m1 ** 3
+    c2_idx = jnp.asarray(c2, dtype=int) if n2 > 0 else jnp.zeros((0, 2), dtype=int)
+    c3_idx = jnp.asarray(c3, dtype=int) if n3 > 0 else jnp.zeros((0, 3), dtype=int)
+    beta2 = jnp.asarray(beta2_host, dtype=int)
+    beta3 = jnp.asarray(beta3_host, dtype=int)
 
     # Normalize X
     X_n = _normalize_X(X, problem)
 
     # Build B-spline bases
     B1 = _build_B1(X_n, m)  # (N, m1, D)
-    B2 = _build_B2(B1, c2_idx, m1) if n2 > 0 else jnp.zeros((N, 1, 1))
-    B3 = _build_B3(B1, c3_idx, m1) if n3 > 0 else jnp.zeros((N, 1, 1))
+    B2 = _build_B2(B1, c2_idx, beta2) if n2 > 0 else jnp.zeros((N, 1, 1))
+    B3 = _build_B3(B1, c3_idx, beta3) if n3 > 0 else jnp.zeros((N, 1, 1))
 
     # Precompute F critical values
     f_crits = _compute_f_crits(0.95, m1, m2, m3, N)
@@ -176,12 +208,6 @@ def analyze_hdmr(
     # Promote Y to 3D
     Y_3d, squeeze_time, squeeze_output = _prepare_Y(Y)
     _, T, K_out = Y_3d.shape
-
-    # Create kernel (JIT-compiled, all sizes captured in closure)
-    kernel = _make_hdmr_kernel(
-        maxorder, m1, n1, maxiter, m2, m3, n2, n3, n, lambdax, N,
-    )
-    batched_kernel = jax.jit(jax.vmap(kernel, in_axes=(None, None, None, 0, None)))
 
     Y_flat = Y_3d.transpose(1, 2, 0).reshape(T * K_out, N)
     total = T * K_out
@@ -194,6 +220,9 @@ def analyze_hdmr(
     C3_sum = jnp.zeros((m3, n3)) if n3 > 0 else jnp.zeros((1, 1))
     f0_sum = jnp.array(0.0)
 
+    batched_kernel = _get_batched_hdmr_kernel(
+        D, maxorder, m, maxiter, lambdax, N,
+    )
     for start in range(0, total, cs):
         end = min(start + cs, total)
         sa, sb, s, sel, rmse_val, c1_coef, c2_coef, c3_coef, f0_val = batched_kernel(
@@ -231,8 +260,8 @@ def analyze_hdmr(
         "f0": f0_sum / total,
         "m": m,
         "maxorder": maxorder,
-        "c2": c2,
-        "c3": c3,
+        "c2": list(c2),
+        "c3": list(c3),
     }
 
     return HDMRResult(
@@ -276,11 +305,25 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
     Y_total = jnp.sum(jnp.einsum('rmj,mj->rj', B1, C1), axis=1)
 
     if maxorder >= 2 and em["C2"] is not None:
-        B2 = _build_B2(B1, jnp.array(em["c2"], dtype=int), m1)
+        _, _, _, _, _, _, _, _, _, _, beta2_host, _ = _get_hdmr_static_data(
+            result.problem.num_vars, maxorder, em["m"],
+        )
+        B2 = _build_B2(
+            B1,
+            jnp.asarray(em["c2"], dtype=int),
+            jnp.asarray(beta2_host, dtype=int),
+        )
         Y_total = Y_total + jnp.sum(jnp.einsum('rmj,mj->rj', B2, em["C2"]), axis=1)
 
     if maxorder >= 3 and em["C3"] is not None:
-        B3 = _build_B3(B1, jnp.array(em["c3"], dtype=int), m1)
+        _, _, _, _, _, _, _, _, _, _, _, beta3_host = _get_hdmr_static_data(
+            result.problem.num_vars, maxorder, em["m"],
+        )
+        B3 = _build_B3(
+            B1,
+            jnp.asarray(em["c3"], dtype=int),
+            jnp.asarray(beta3_host, dtype=int),
+        )
         Y_total = Y_total + jnp.sum(jnp.einsum('rmj,mj->rj', B3, em["C3"]), axis=1)
 
     return Y_total + f0

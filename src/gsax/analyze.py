@@ -14,6 +14,8 @@ Array shape conventions used throughout:
     step — rows per Saltelli group: 2D+2 (second order) or D+2 (first only)
 """
 
+from functools import lru_cache
+
 import jax
 import jax.numpy as jnp
 from jax import Array, vmap
@@ -21,6 +23,22 @@ from jax import Array, vmap
 from gsax._indices import first_order, second_order, total_order
 from gsax.results import SAResult
 from gsax.sampling import SamplingResult
+
+
+@lru_cache(maxsize=None)
+def _get_no_bootstrap_batched_kernel(calc_second_order: bool):
+    """Cache final batched Sobol wrappers keyed only on order flag."""
+    if calc_second_order:
+        return jax.jit(jax.vmap(_kernel_second_order, in_axes=(0, 0, 0, 0)))
+    return jax.jit(jax.vmap(_kernel_first_total, in_axes=(0, 0, 0)))
+
+
+@lru_cache(maxsize=None)
+def _get_bootstrap_point_kernel(calc_second_order: bool):
+    """Cache bootstrap point-estimate kernels separately from no-bootstrap wrappers."""
+    if calc_second_order:
+        return jax.jit(_kernel_second_order)
+    return jax.jit(_kernel_first_total)
 
 
 def _drop_nonfinite(Y: Array, step: int) -> tuple[Array, int]:
@@ -374,8 +392,8 @@ def _analyze_no_bootstrap(
         assert BA is not None
         # Same reshape as AB: (N, D, T, K) -> (T*K, N, D)
         BA_flat = BA.transpose(2, 3, 0, 1).reshape(T * K, base_n, D)  # (T*K, N, D)
-        batched = jax.jit(jax.vmap(_kernel_second_order, in_axes=(0, 0, 0, 0)))
 
+        batched = _get_no_bootstrap_batched_kernel(True)
         s1_parts, st_parts, s2_parts = [], [], []
         for start in range(0, total, cs):
             end = min(start + cs, total)
@@ -396,8 +414,7 @@ def _analyze_no_bootstrap(
             jnp.concatenate(s2_parts).reshape(T, K, D, D)        # (T, K, D, D)
         )
     else:
-        batched = jax.jit(jax.vmap(_kernel_first_total, in_axes=(0, 0, 0)))
-
+        batched = _get_no_bootstrap_batched_kernel(False)
         s1_parts, st_parts = [], []
         for start in range(0, total, cs):
             end = min(start + cs, total)
@@ -472,10 +489,9 @@ def _analyze_bootstrap(
     alpha = (1.0 - conf_level) / 2.0
     percentiles = jnp.array([alpha * 100, (1.0 - alpha) * 100])  # (2,)
 
-    # Pre-JIT the point-estimate kernels; shapes are identical across (t, k)
-    # iterations so each kernel is traced/compiled only once.
-    jit_ft = jax.jit(_kernel_first_total)
-    jit_so = jax.jit(_kernel_second_order) if calc_second_order else None
+    # Cache point-estimate kernels separately from the no-bootstrap batched wrappers.
+    jit_ft = _get_bootstrap_point_kernel(False)
+    jit_so = _get_bootstrap_point_kernel(True) if calc_second_order else None
 
     # Accumulators — each list collects T*K items (one per output combo)
     S1_list, ST_list = [], []

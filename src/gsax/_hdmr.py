@@ -5,7 +5,6 @@ regularized least squares, backfitting for first-order terms, ANCOVA decompositi
 and F-test model selection.
 """
 
-import itertools
 from functools import partial
 
 import jax
@@ -72,35 +71,33 @@ def _build_B1(X_n: Array, m: int) -> Array:
     return B1_T.transpose(1, 2, 0)  # (N, m1, D)
 
 
-def _build_B2(B1: Array, c2: Array, m1: int) -> Array:
+def _build_B2(B1: Array, c2: Array, beta: Array) -> Array:
     """Build second-order tensor product basis.
 
     Args:
         B1: (N, m1, D) first-order basis.
         c2: (n2, 2) int array of parameter index combinations.
-        m1: number of basis functions per dimension (m + 3).
+        beta: (m1^2, 2) tensor-product basis index table.
 
     Returns:
         B2: (N, m1^2, n2) second-order basis.
     """
-    beta = jnp.array(list(itertools.product(range(m1), repeat=2)))  # (m2, 2)
     left = B1[:, :, c2[:, 0]][:, beta[:, 0], :]   # (N, m2, n2)
     right = B1[:, :, c2[:, 1]][:, beta[:, 1], :]  # (N, m2, n2)
     return left * right
 
 
-def _build_B3(B1: Array, c3: Array, m1: int) -> Array:
+def _build_B3(B1: Array, c3: Array, beta: Array) -> Array:
     """Build third-order tensor product basis.
 
     Args:
         B1: (N, m1, D) first-order basis.
         c3: (n3, 3) int array of parameter index combinations.
-        m1: number of basis functions per dimension (m + 3).
+        beta: (m1^3, 3) tensor-product basis index table.
 
     Returns:
         B3: (N, m1^3, n3) third-order basis.
     """
-    beta = jnp.array(list(itertools.product(range(m1), repeat=3)))  # (m3, 3)
     a = B1[:, :, c3[:, 0]][:, beta[:, 0], :]  # (N, m3, n3)
     b = B1[:, :, c3[:, 1]][:, beta[:, 1], :]
     c = B1[:, :, c3[:, 2]][:, beta[:, 2], :]
@@ -336,17 +333,16 @@ def _make_hdmr_kernel(
     maxorder: int, m1: int, n1: int, maxiter: int,
     m2: int, m3: int, n2: int, n3: int, n: int, lambdax: float, R: int,
 ):
-    """Create a JIT-compiled HDMR fitting kernel for a given maxorder.
+    """Create an HDMR fitting kernel for a given maxorder.
 
     All integer/float parameters are captured in the closure so they are
-    concrete (not traced) inside the JIT boundary.
+    concrete when this kernel is wrapped by a cached outer ``jit(vmap(...))``.
 
     Returns a function: kernel(B1_sub, B2_sub, B3_sub, Y_sub, f_crits)
     """
 
     if maxorder == 1:
 
-        @jax.jit
         def kernel(B1_sub, _B2_sub, _B3_sub, Y_sub, f_crits):
             f0 = jnp.mean(Y_sub)
             V_Y = jnp.var(Y_sub)
@@ -370,7 +366,6 @@ def _make_hdmr_kernel(
 
     elif maxorder == 2:
 
-        @jax.jit
         def kernel(B1_sub, B2_sub, _B3_sub, Y_sub, f_crits):
             f0 = jnp.mean(Y_sub)
             V_Y = jnp.var(Y_sub)
@@ -397,7 +392,6 @@ def _make_hdmr_kernel(
 
     else:  # maxorder == 3
 
-        @jax.jit
         def kernel(B1_sub, B2_sub, B3_sub, Y_sub, f_crits):
             f0 = jnp.mean(Y_sub)
             V_Y = jnp.var(Y_sub)

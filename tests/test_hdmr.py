@@ -129,6 +129,22 @@ def test_chunk_size_regression(ishigami_data):
     np.testing.assert_allclose(result_default.rmse, result_chunked.rmse, rtol=1e-6, atol=1e-6)
 
 
+def test_repeated_calls_identical(ishigami_data):
+    """Repeated identical HDMR calls should return identical outputs."""
+    X, Y = ishigami_data
+    result_first = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2)
+    result_second = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2)
+
+    np.testing.assert_allclose(result_first.Sa, result_second.Sa, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_first.Sb, result_second.Sb, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_first.S, result_second.S, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_first.ST, result_second.ST, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_first.rmse, result_second.rmse, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_first.emulator["C1"], result_second.emulator["C1"], rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_first.emulator["C2"], result_second.emulator["C2"], rtol=1e-6, atol=1e-6)
+    assert result_first.terms == result_second.terms
+
+
 # ---------------------------------------------------------------------------
 # maxorder tests
 # ---------------------------------------------------------------------------
@@ -208,6 +224,8 @@ def test_select_and_rmse(hdmr_result):
     assert hdmr_result.select is not None
     assert hdmr_result.rmse is not None
     assert hdmr_result.select.shape[0] > 0
+    assert isinstance(hdmr_result.emulator["c2"], list)
+    assert isinstance(hdmr_result.emulator["c3"], list)
 
 
 def test_s1_property(hdmr_result):
@@ -242,6 +260,13 @@ def test_constant_y():
     result = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2)
     assert not jnp.any(jnp.isnan(result.Sa))
     assert not jnp.any(jnp.isnan(result.ST))
+
+
+def test_scalar_like_lambdax(ishigami_data):
+    """Scalar-like lambdax inputs should still be accepted."""
+    X, Y = ishigami_data
+    result = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2, lambdax=jnp.array(0.01))
+    assert result.Sa.shape[0] == PROBLEM.num_vars + PROBLEM.num_vars * (PROBLEM.num_vars - 1) // 2
 
 
 def test_validation_errors():
