@@ -105,3 +105,5 @@ latex.out/
 *.swp
 *.swo
 *~
+
+docs/node_modules/
