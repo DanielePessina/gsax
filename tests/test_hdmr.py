@@ -109,6 +109,24 @@ def test_shapes_3d(ishigami_data):
     n_terms = D + D * (D - 1) // 2
     assert result.Sa.shape == (T, K, n_terms)
     assert result.ST.shape == (T, K, D)
+    assert result.rmse.shape == (T * K,)
+
+
+def test_chunk_size_regression(ishigami_data):
+    """Chunked and unchunked HDMR paths should agree for multi-output Y."""
+    X, Y = ishigami_data
+    Y_2d = jnp.stack([Y, Y * 0.5], axis=1)
+
+    result_default = analyze_hdmr(PROBLEM, X, Y_2d, maxorder=2, m=2)
+    result_chunked = analyze_hdmr(
+        PROBLEM, X, Y_2d, maxorder=2, m=2, chunk_size=1,
+    )
+
+    np.testing.assert_allclose(result_default.Sa, result_chunked.Sa, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_default.Sb, result_chunked.Sb, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_default.S, result_chunked.S, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_default.ST, result_chunked.ST, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result_default.rmse, result_chunked.rmse, rtol=1e-6, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -239,3 +257,6 @@ def test_validation_errors():
 
     with pytest.raises(ValueError, match="maxorder"):
         analyze_hdmr(PROBLEM, X, Y, maxorder=4)
+
+    with pytest.raises(ValueError, match="chunk_size"):
+        analyze_hdmr(PROBLEM, X, Y, chunk_size=0)

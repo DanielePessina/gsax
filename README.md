@@ -86,8 +86,7 @@ Y = evaluate(X)  # Y.shape == (2000,)
 result = gsax.analyze_hdmr(
     PROBLEM, X, Y,
     maxorder=2,
-    num_bootstrap=20,
-    key=jax.random.PRNGKey(0),
+    chunk_size=64,  # optional: limit T*K vmap batch size for memory control
 )
 
 # Sobol-compatible first-order and total-order indices
@@ -322,11 +321,8 @@ def analyze_hdmr(
     maxorder: int = 2,                 # 1, 2, or 3
     maxiter: int = 100,                # backfitting iterations
     m: int = 2,                        # B-spline intervals (basis = m+3 per dim)
-    num_bootstrap: int = 20,           # 1 = no bootstrap
-    subsample_size: int | None = None, # default: N // 2
-    conf_level: float = 0.95,
     lambdax: float = 0.01,            # regularization
-    key: Array | None = None,          # required if num_bootstrap > 1
+    chunk_size: int = 2048,            # max T*K outputs per jit(vmap(...)) batch
 ) -> HDMRResult
 ```
 
@@ -338,11 +334,8 @@ def analyze_hdmr(
 | `maxorder` | `int` | `2` | Maximum expansion order. 1 = main effects only, 2 = + pairwise interactions, 3 = + triple interactions. |
 | `maxiter` | `int` | `100` | Maximum backfitting iterations for first-order terms. |
 | `m` | `int` | `2` | Number of B-spline intervals. Each dimension gets `m + 3` basis functions. |
-| `num_bootstrap` | `int` | `20` | Number of bootstrap iterations. Set to 1 to skip bootstrap. |
-| `subsample_size` | `int \| None` | `None` | Bootstrap subsample size R. Defaults to `N // 2`. |
-| `conf_level` | `float` | `0.95` | Confidence level for bootstrap CIs. |
 | `lambdax` | `float` | `0.01` | Tikhonov regularization parameter. |
-| `key` | `Array \| None` | `None` | JAX PRNG key. **Required** when `num_bootstrap > 1`. |
+| `chunk_size` | `int` | `2048` | Number of `(T, K)` output combinations to process per `jit(vmap(...))` call. Lower values reduce peak memory; higher values improve throughput. |
 
 **Returns:** `HDMRResult`
 
@@ -363,7 +356,7 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array
 
 ### `HDMRResult`
 
-Dataclass holding HDMR sensitivity indices, confidence intervals, and emulator data.
+Dataclass holding HDMR sensitivity indices and emulator data.
 
 ```python
 @dataclass
@@ -374,12 +367,8 @@ class HDMRResult:
     ST: Array                          # total-order per parameter
     problem: Problem
     terms: tuple[str, ...]             # ("x1", "x2", "x1/x2", ...) term labels
-    Sa_conf: Array | None = None       # bootstrap CI bounds [lo, hi]
-    Sb_conf: Array | None = None
-    S_conf: Array | None = None
-    ST_conf: Array | None = None
     emulator: dict | None = None       # fitted coefficients for prediction
-    select: Array | None = None        # F-test selection counts
+    select: Array | None = None        # F-test selection counts across outputs
     rmse: Array | None = None          # emulator RMSE per output
 ```
 
@@ -390,10 +379,9 @@ class HDMRResult:
 | `S` | same as Sa | Total sensitivity per term (`Sa + Sb`). |
 | `ST` | `(D,)` / `(K, D)` / `(T, K, D)` | Total-order sensitivity per parameter (sum of S over all terms involving that parameter). Equivalent to Sobol ST. |
 | `S1` | same as ST | **Property.** First-order Sobol indices — extracts `Sa[:D]`. |
-| `S1_conf` | `(2, ...)` or `None` | **Property.** Confidence interval for S1 — extracts `Sa_conf[..., :D]`. |
 | `terms` | `tuple[str, ...]` | Human-readable labels, e.g. `("x1", "x2", "x1/x2")`. |
 | `emulator` | `dict \| None` | Fitted B-spline coefficients. Pass the result to `emulate_hdmr()` for prediction. |
-| `select` | `(n_terms,)` or `None` | F-test selection counts across bootstrap iterations. |
+| `select` | `(n_terms,)` or `None` | F-test selection counts summed across all output combinations. |
 | `rmse` | `Array \| None` | Emulator RMSE per output combination. |
 
 **Number of terms by maxorder:**

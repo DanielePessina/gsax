@@ -7,6 +7,7 @@ for prediction with the fitted surrogate.
 
 import itertools
 
+import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -57,21 +58,20 @@ def _build_term_labels(
 
 
 def _compute_ST(
-    S: Array, c1: list, c2: list, c3: list, D: int,
+    S: Array, c2: Array, c3: Array, n1: int, D: int,
 ) -> Array:
     """Compute total-order indices by summing S over terms involving each param."""
-    n1 = len(c1)
-    ST = S[:n1]  # First order: term r = parameter r
+    ST = S[..., :n1]  # First order terms map 1:1 to parameters.
 
-    offset = n1
-    for j, (a, b) in enumerate(c2):
-        ST = ST.at[a].add(S[offset + j])
-        ST = ST.at[b].add(S[offset + j])
+    n2 = c2.shape[0]
+    S2 = S[..., n1:n1 + n2]
+    ST = ST.at[..., c2[:, 0]].add(S2)
+    ST = ST.at[..., c2[:, 1]].add(S2)
 
-    offset = n1 + len(c2)
-    for j, combo in enumerate(c3):
-        for p in combo:
-            ST = ST.at[p].add(S[offset + j])
+    S3 = S[..., n1 + n2:]
+    ST = ST.at[..., c3[:, 0]].add(S3)
+    ST = ST.at[..., c3[:, 1]].add(S3)
+    ST = ST.at[..., c3[:, 2]].add(S3)
 
     return ST
 
@@ -113,8 +113,8 @@ def analyze_hdmr(
     maxorder: int = 2,
     maxiter: int = 100,
     m: int = 2,
-    subsample_size: int | None = None,
     lambdax: float = 0.01,
+    chunk_size: int = 2048,
 ) -> HDMRResult:
     """Compute sensitivity indices via RS-HDMR with B-spline surrogate modelling.
 
@@ -130,8 +130,8 @@ def analyze_hdmr(
         maxorder: Maximum HDMR expansion order (1, 2, or 3).
         maxiter: Maximum backfitting iterations for first-order terms.
         m: Number of B-spline intervals (basis size = m + 3 per dimension).
-        subsample_size: Subsample size R (default: use all N samples).
         lambdax: Tikhonov regularization parameter.
+        chunk_size: Maximum number of (T, K) output combos per vmap batch.
 
     Returns:
         HDMRResult with Sa, Sb, S, ST, emulator, etc.
@@ -150,12 +150,14 @@ def analyze_hdmr(
         raise ValueError(f"maxorder must be 1, 2, or 3, got {maxorder}")
     if D == 2 and maxorder > 2:
         raise ValueError("maxorder must be <= 2 when D = 2")
-
-    R = subsample_size if subsample_size is not None else N
+    if chunk_size < 1:
+        raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
 
     # Build terms
     c1, c2, c3, n1, n2, n3, n = _build_terms(D, maxorder)
     term_labels = _build_term_labels(problem, c1, c2, c3)
+    c2_idx = jnp.array(c2, dtype=int) if n2 > 0 else jnp.zeros((0, 2), dtype=int)
+    c3_idx = jnp.array(c3, dtype=int) if n3 > 0 else jnp.zeros((0, 3), dtype=int)
     m1 = m + 3
     m2 = m1 ** 2
     m3 = m1 ** 3
@@ -165,14 +167,11 @@ def analyze_hdmr(
 
     # Build B-spline bases
     B1 = _build_B1(X_n, m)  # (N, m1, D)
-    B2 = _build_B2(B1, jnp.array(c2, dtype=int), m1) if n2 > 0 else jnp.zeros((N, 1, 1))
-    B3 = _build_B3(B1, jnp.array(c3, dtype=int), m1) if n3 > 0 else jnp.zeros((N, 1, 1))
+    B2 = _build_B2(B1, c2_idx, m1) if n2 > 0 else jnp.zeros((N, 1, 1))
+    B3 = _build_B3(B1, c3_idx, m1) if n3 > 0 else jnp.zeros((N, 1, 1))
 
     # Precompute F critical values
-    f_crits = _compute_f_crits(0.95, m1, m2, m3, R)
-
-    # Use all samples
-    indices = jnp.arange(N)
+    f_crits = _compute_f_crits(0.95, m1, m2, m3, N)
 
     # Promote Y to 3D
     Y_3d, squeeze_time, squeeze_output = _prepare_Y(Y)
@@ -180,53 +179,43 @@ def analyze_hdmr(
 
     # Create kernel (JIT-compiled, all sizes captured in closure)
     kernel = _make_hdmr_kernel(
-        maxorder, m1, n1, maxiter, m2, m3, n2, n3, n, lambdax, R,
+        maxorder, m1, n1, maxiter, m2, m3, n2, n3, n, lambdax, N,
     )
+    batched_kernel = jax.jit(jax.vmap(kernel, in_axes=(None, None, None, 0, None)))
 
-    # Accumulators for all (t, k) combos
-    Sa_all, Sb_all, S_all, ST_all = [], [], [], []
+    Y_flat = Y_3d.transpose(1, 2, 0).reshape(T * K_out, N)
+    total = T * K_out
+    cs = min(chunk_size, total)
+
+    sa_parts, sb_parts, s_parts, rmse_parts = [], [], [], []
     select_sum = jnp.zeros(n)
-    rmse_all = []
     C1_sum = jnp.zeros((m1, n1))
     C2_sum = jnp.zeros((m2, n2)) if n2 > 0 else jnp.zeros((1, 1))
     C3_sum = jnp.zeros((m3, n3)) if n3 > 0 else jnp.zeros((1, 1))
-    f0_sum = 0.0
-    n_fits = 0
+    f0_sum = jnp.array(0.0)
 
-    for t in range(T):
-        for k in range(K_out):
-            Y_tk = Y_3d[:, t, k]  # (N,)
-
-            B1_sub = B1[indices]
-            B2_sub = B2[indices] if n2 > 0 else jnp.zeros((R, 1, 1))
-            B3_sub = B3[indices] if n3 > 0 else jnp.zeros((R, 1, 1))
-            Y_sub = Y_tk[indices]
-
-            sa, sb, s, sel, rmse_val, c1_coef, c2_coef, c3_coef, f0_val = kernel(
-                B1_sub, B2_sub, B3_sub, Y_sub, f_crits,
-            )
-
-            Sa_all.append(sa)
-            Sb_all.append(sb)
-            S_all.append(s)
-            ST_all.append(_compute_ST(s, c1, c2, c3, D))
-
-            select_sum = select_sum + sel
-            rmse_all.append(rmse_val)
-
-            C1_sum = C1_sum + c1_coef
-            if n2 > 0:
-                C2_sum = C2_sum + c2_coef
-            if n3 > 0:
-                C3_sum = C3_sum + c3_coef
-            f0_sum = f0_sum + float(f0_val)
-            n_fits += 1
+    for start in range(0, total, cs):
+        end = min(start + cs, total)
+        sa, sb, s, sel, rmse_val, c1_coef, c2_coef, c3_coef, f0_val = batched_kernel(
+            B1, B2, B3, Y_flat[start:end], f_crits,
+        )
+        sa_parts.append(sa)
+        sb_parts.append(sb)
+        s_parts.append(s)
+        rmse_parts.append(rmse_val)
+        select_sum = select_sum + jnp.sum(sel, axis=0)
+        C1_sum = C1_sum + jnp.sum(c1_coef, axis=0)
+        if n2 > 0:
+            C2_sum = C2_sum + jnp.sum(c2_coef, axis=0)
+        if n3 > 0:
+            C3_sum = C3_sum + jnp.sum(c3_coef, axis=0)
+        f0_sum = f0_sum + jnp.sum(f0_val)
 
     # Reshape to (T, K, n_terms) / (T, K, D)
-    Sa_out = jnp.stack(Sa_all).reshape(T, K_out, n)
-    Sb_out = jnp.stack(Sb_all).reshape(T, K_out, n)
-    S_out = jnp.stack(S_all).reshape(T, K_out, n)
-    ST_out = jnp.stack(ST_all).reshape(T, K_out, D)
+    Sa_out = jnp.concatenate(sa_parts).reshape(T, K_out, n)
+    Sb_out = jnp.concatenate(sb_parts).reshape(T, K_out, n)
+    S_out = jnp.concatenate(s_parts).reshape(T, K_out, n)
+    ST_out = _compute_ST(S_out, c2_idx, c3_idx, n1, D)
 
     # Squeeze
     Sa_out, Sb_out, S_out, ST_out = _squeeze_hdmr(
@@ -236,10 +225,10 @@ def analyze_hdmr(
 
     # Build emulator dict
     emulator = {
-        "C1": C1_sum / n_fits,
-        "C2": C2_sum / n_fits if n2 > 0 else None,
-        "C3": C3_sum / n_fits if n3 > 0 else None,
-        "f0": f0_sum / n_fits,
+        "C1": C1_sum / total,
+        "C2": C2_sum / total if n2 > 0 else None,
+        "C3": C3_sum / total if n3 > 0 else None,
+        "f0": f0_sum / total,
         "m": m,
         "maxorder": maxorder,
         "c2": c2,
@@ -255,7 +244,7 @@ def analyze_hdmr(
         terms=term_labels,
         emulator=emulator,
         select=select_sum,
-        rmse=jnp.stack(rmse_all) if rmse_all else None,
+        rmse=jnp.concatenate(rmse_parts),
     )
 
 
