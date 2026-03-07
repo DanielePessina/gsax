@@ -40,9 +40,11 @@ pip install -e ".[dev]"
 import gsax
 from gsax.benchmarks.ishigami import PROBLEM, evaluate
 
-# 1. Generate Saltelli samples
+# 1. Generate unique Sobol/Saltelli samples
 sampling_result = gsax.sample(PROBLEM, n_samples=4096, seed=42)
-# sampling_result.samples.shape == (n_total, D)  where D = 3
+# sampling_result.samples.shape == (n_total, D)  where n_total is the unique row count
+# sampling_result.expanded_n_total is the internal Saltelli row count used by analyze()
+# by default, sample() also prints a short summary of unique vs expanded rows
 
 # 2. Evaluate your model on the samples
 Y = evaluate(sampling_result.samples)  # Y.shape == (n_total,)
@@ -130,21 +132,23 @@ problem = Problem(
 ```python
 sampling_result = gsax.sample(
     problem,
-    n_samples=4096,          # minimum desired model evaluations
+    n_samples=4096,          # minimum desired unique model evaluations
     calc_second_order=True,  # include second-order indices (default)
     scramble=True,           # scramble Sobol sequence (default)
     seed=42,                 # reproducibility
+    verbose=True,            # print a short sampling summary (default)
 )
 
-# sampling_result.samples is a NumPy array of shape (n_total, D)
-# Pass it to your model
+# sampling_result.samples is the unique NumPy array you pass to your model
+# sampling_result.samples_df is a pandas DataFrame with SampleID + parameter columns
+# sampling_result.expanded_n_total is the internal Saltelli row count
 ```
 
 ### Analyze results
 
 ```python
 # Y can be:
-#   - (n_total,)       scalar output
+#   - (n_total,)       scalar output on the unique rows
 #   - (n_total, K)     multi-output (K outputs)
 #   - (n_total, T, K)  time-series multi-output
 Y = my_model(sampling_result.samples)
@@ -161,7 +165,7 @@ result = gsax.analyze(
 
 ### Multi-output models
 
-For models with multiple outputs, pass a 2D array `(n_total, K)`. The returned indices will have shape `(K, D)`:
+For models with multiple outputs, pass a 2D array `(n_total, K)` evaluated on the unique rows. The returned indices will have shape `(K, D)`:
 
 ```python
 import jax.numpy as jnp
@@ -178,7 +182,7 @@ result = gsax.analyze(sampling_result, Y)
 # result.S2.shape == (2, 3, 3)  — (K, D, D)
 ```
 
-For time-series multi-output models, pass a 3D array `(n_total, T, K)`:
+For time-series multi-output models, pass a 3D array `(n_total, T, K)` evaluated on the unique rows:
 
 ```python
 def time_series_model(X):
@@ -216,51 +220,60 @@ class Problem:
 
 ### `gsax.sample()`
 
-Generate a Saltelli sample matrix using Sobol quasi-random sequences.
+Generate a unique Sobol/Saltelli sample matrix using Sobol quasi-random sequences.
 
 ```python
 def sample(
     problem: Problem,
-    n_samples: int,               # minimum desired model evaluations
+    n_samples: int,               # minimum desired unique model evaluations
     *,
     calc_second_order: bool = True,
     scramble: bool = True,
     seed: int | np.random.Generator | None = None,
+    verbose: bool = True,
 ) -> SamplingResult
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `problem` | `Problem` | required | The parameter space definition. |
-| `n_samples` | `int` | required | Minimum number of model evaluations desired. The actual `base_n` (N) will be rounded up to the next power of 2. |
-| `calc_second_order` | `bool` | `True` | Whether to generate the extra sample matrices needed for second-order indices. When `True`, `n_total = N * (2D + 2)`. When `False`, `n_total = N * (D + 2)`. |
+| `n_samples` | `int` | required | Minimum number of unique model evaluations desired. The actual `base_n` (N) is increased until the deduplicated sample matrix has at least this many rows. |
+| `calc_second_order` | `bool` | `True` | Whether to generate the extra Saltelli cross-matrices needed for second-order indices. When `True`, the expanded Saltelli layout has `expanded_n_total = N * (2D + 2)`. When `False`, `expanded_n_total = N * (D + 2)`. |
 | `scramble` | `bool` | `True` | Apply Owen scrambling to the Sobol sequence for better uniformity. |
 | `seed` | `int \| np.random.Generator \| None` | `None` | Seed for reproducibility of the scrambled Sobol sequence. |
+| `verbose` | `bool` | `True` | Print a compact summary showing the requested unique count, returned unique count, expanded Saltelli row count, and duplicates removed. |
 
 **Returns:** `SamplingResult`
 
 ### `SamplingResult`
 
-Immutable dataclass returned by `gsax.sample()`. Carries the sample matrix and all metadata needed by `gsax.analyze()`.
+Immutable dataclass returned by `gsax.sample()`. Carries the unique sample matrix and all metadata needed by `gsax.analyze()` to reconstruct the expanded Saltelli layout internally.
 
 ```python
 @dataclass(frozen=True)
 class SamplingResult:
-    samples: np.ndarray       # (n_total, D) — scaled to parameter bounds
-    base_n: int               # N, always a power of 2
-    n_params: int             # D = number of parameters
-    calc_second_order: bool   # whether S2 matrices were generated
-    problem: Problem          # the Problem used to generate samples
+    samples: np.ndarray            # (n_total, D) — unique rows scaled to bounds
+    sample_ids: np.ndarray         # (n_total,) stable unique row IDs
+    expanded_n_total: int          # total Saltelli rows after reconstruction
+    expanded_to_unique: np.ndarray # (expanded_n_total,) expanded row -> unique row
+    base_n: int                    # N, always a power of 2
+    n_params: int                  # D = number of parameters
+    calc_second_order: bool        # whether S2 matrices were generated
+    problem: Problem               # the Problem used to generate samples
 ```
 
 | Field / Property | Type | Shape / Value | Description |
 |---|---|---|---|
-| `samples` | `np.ndarray` | `(n_total, D)` | Sample matrix with values scaled to the parameter bounds defined in `problem`. Pass this to your model. |
-| `base_n` | `int` | N | The base sample count, always a power of 2 >= the requested `n_samples` divided by the step multiplier. |
+| `samples` | `np.ndarray` | `(n_total, D)` | Unique sample matrix with values scaled to the parameter bounds defined in `problem`. Pass this to your model. |
+| `sample_ids` | `np.ndarray` | `(n_total,)` | Stable integer IDs `0..n_total-1` aligned with `samples`. |
+| `expanded_n_total` | `int` | `N * step` | Total Saltelli row count used internally by `analyze()`. |
+| `expanded_to_unique` | `np.ndarray` | `(expanded_n_total,)` | Index map from each expanded Saltelli row to the corresponding unique row in `samples`. |
+| `base_n` | `int` | N | The base Sobol sample count, always a power of 2. |
 | `n_params` | `int` | D | Number of parameters (same as `problem.num_vars`). |
-| `calc_second_order` | `bool` | | Whether second-order cross-matrices are included in `samples`. |
+| `calc_second_order` | `bool` | | Whether second-order cross-matrices are included in the expanded Saltelli layout. |
 | `problem` | `Problem` | | The Problem instance used during sampling. |
-| `n_total` | `int` (property) | `base_n * step` | Total number of rows in `samples`. The step is `2D + 2` (second-order) or `D + 2` (first/total only). |
+| `samples_df` | `pd.DataFrame` (property) | `(n_total, D + 1)` | Tabular view of the unique samples with `SampleID` followed by parameter columns. |
+| `n_total` | `int` (property) | `samples.shape[0]` | Total number of unique rows in `samples`. |
 
 ### `gsax.analyze()`
 
@@ -281,7 +294,7 @@ def analyze(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `sampling_result` | `SamplingResult` | required | The result from `gsax.sample()`. |
-| `Y` | `Array` | required | Model output. Shape must be `(n_total,)`, `(n_total, K)`, or `(n_total, T, K)` where `n_total` matches `sampling_result.n_total`. |
+| `Y` | `Array` | required | Model output evaluated on the unique rows in `sampling_result.samples`. Shape must be `(n_total,)`, `(n_total, K)`, or `(n_total, T, K)` where `n_total` matches `sampling_result.n_total`. |
 | `num_resamples` | `int` | `0` | Number of bootstrap resamples. Set to 0 to skip bootstrap (no confidence intervals). |
 | `conf_level` | `float` | `0.95` | Confidence level for bootstrap intervals (e.g. 0.95 for 95% CI). |
 | `key` | `Array \| None` | `None` | JAX PRNG key (e.g. `jax.random.key(0)`). **Required** when `num_resamples > 0`. |

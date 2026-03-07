@@ -5,12 +5,13 @@ import pytest
 
 import gsax
 from gsax.benchmarks.ishigami import ANALYTICAL_S1, ANALYTICAL_S2, ANALYTICAL_ST, PROBLEM, evaluate
+from gsax.sampling import SamplingResult
 
 
 @pytest.fixture(scope="module")
 def ishigami_result():
     """Run Ishigami analysis once for all tests in this module."""
-    sr = gsax.sample(PROBLEM, n_samples=2**14 * 8, seed=42)
+    sr = gsax.sample(PROBLEM, n_samples=2**14 * 8, seed=42, verbose=False)
     Y = evaluate(jnp.asarray(sr.samples))
     return gsax.analyze(sr, Y)
 
@@ -53,7 +54,7 @@ def test_s2_accuracy(ishigami_result):
 @pytest.fixture(scope="module")
 def ishigami_bootstrap_result():
     """Run Ishigami analysis with bootstrap CIs once for all tests."""
-    sr = gsax.sample(PROBLEM, n_samples=2**14 * 8, seed=42)
+    sr = gsax.sample(PROBLEM, n_samples=2**14 * 8, seed=42, verbose=False)
     Y = evaluate(jnp.asarray(sr.samples))
     return gsax.analyze(sr, Y, num_resamples=200, key=jax.random.key(0))
 
@@ -93,3 +94,62 @@ def test_bootstrap_ci_contains_analytical(ishigami_bootstrap_result):
         assert ST_lo[i] <= expected <= ST_hi[i], (
             f"ST[{i}]: analytical {expected} not in CI [{ST_lo[i]}, {ST_hi[i]}]"
         )
+
+
+def _legacy_sampling_result(sr: SamplingResult) -> SamplingResult:
+    expanded_n_total = sr.expanded_n_total
+    expanded_samples = sr.samples[sr.expanded_to_unique]
+    return SamplingResult(
+        samples=expanded_samples,
+        sample_ids=np.arange(expanded_n_total, dtype=np.int64),
+        expanded_n_total=expanded_n_total,
+        expanded_to_unique=np.arange(expanded_n_total, dtype=np.int64),
+        base_n=sr.base_n,
+        n_params=sr.n_params,
+        calc_second_order=sr.calc_second_order,
+        problem=sr.problem,
+    )
+
+
+def test_unique_analysis_matches_expanded_layout():
+    sr = gsax.sample(PROBLEM, n_samples=1024, seed=7, verbose=False)
+    Y_unique = evaluate(jnp.asarray(sr.samples))
+    result_unique = gsax.analyze(sr, Y_unique)
+
+    legacy_sr = _legacy_sampling_result(sr)
+    Y_expanded = Y_unique[sr.expanded_to_unique]
+    result_expanded = gsax.analyze(legacy_sr, Y_expanded)
+
+    assert np.allclose(np.asarray(result_unique.S1), np.asarray(result_expanded.S1))
+    assert np.allclose(np.asarray(result_unique.ST), np.asarray(result_expanded.ST))
+    assert np.allclose(
+        np.asarray(result_unique.S2),
+        np.asarray(result_expanded.S2),
+        equal_nan=True,
+    )
+
+
+def test_unique_bootstrap_matches_expanded_layout():
+    sr = gsax.sample(PROBLEM, n_samples=1024, seed=7, verbose=False)
+    Y_unique = evaluate(jnp.asarray(sr.samples))
+    key = jax.random.key(123)
+    result_unique = gsax.analyze(sr, Y_unique, num_resamples=50, key=key)
+
+    legacy_sr = _legacy_sampling_result(sr)
+    Y_expanded = Y_unique[sr.expanded_to_unique]
+    result_expanded = gsax.analyze(legacy_sr, Y_expanded, num_resamples=50, key=key)
+
+    assert np.allclose(np.asarray(result_unique.S1), np.asarray(result_expanded.S1))
+    assert np.allclose(np.asarray(result_unique.ST), np.asarray(result_expanded.ST))
+    assert np.allclose(
+        np.asarray(result_unique.S2),
+        np.asarray(result_expanded.S2),
+        equal_nan=True,
+    )
+    assert np.allclose(np.asarray(result_unique.S1_conf), np.asarray(result_expanded.S1_conf))
+    assert np.allclose(np.asarray(result_unique.ST_conf), np.asarray(result_expanded.ST_conf))
+    assert np.allclose(
+        np.asarray(result_unique.S2_conf),
+        np.asarray(result_expanded.S2_conf),
+        equal_nan=True,
+    )
