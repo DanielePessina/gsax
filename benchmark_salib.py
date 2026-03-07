@@ -168,10 +168,14 @@ def benchmark_correctness() -> bool:
             ok = abs(g_S1[i]) < 0.05
         else:
             ok = abs(g_S1[i] - analytical_S1[i]) / abs(analytical_S1[i]) < 0.15
-        rows.append(("analyze vs analyt.", f"S1[{i}]", g_S1[i], float("nan"), analytical_S1[i], bool(ok)))
+        rows.append(
+            ("analyze vs analyt.", f"S1[{i}]", g_S1[i], float("nan"), analytical_S1[i], bool(ok))
+        )
     for i in range(D):
         ok = abs(g_ST[i] - analytical_ST[i]) / max(abs(analytical_ST[i]), 0.01) < 0.15
-        rows.append(("analyze vs analyt.", f"ST[{i}]", g_ST[i], float("nan"), analytical_ST[i], bool(ok)))
+        rows.append(
+            ("analyze vs analyt.", f"ST[{i}]", g_ST[i], float("nan"), analytical_ST[i], bool(ok))
+        )
 
     # --- HDMR: gsax vs SALib ---
     rng = np.random.default_rng(42)
@@ -201,10 +205,14 @@ def benchmark_correctness() -> bool:
 
     for i in range(D):
         match = bool(np.abs(g_hdmr_S1[i] - s_hdmr_S1[i]) < 0.05)
-        rows.append(("analyze_hdmr", f"S1[{i}]", g_hdmr_S1[i], s_hdmr_S1[i], analytical_S1[i], match))
+        rows.append(
+            ("analyze_hdmr", f"S1[{i}]", g_hdmr_S1[i], s_hdmr_S1[i], analytical_S1[i], match)
+        )
     for i in range(D):
         match = bool(np.abs(g_hdmr_ST[i] - s_hdmr_ST[i]) < 0.05)
-        rows.append(("analyze_hdmr", f"ST[{i}]", g_hdmr_ST[i], s_hdmr_ST[i], analytical_ST[i], match))
+        rows.append(
+            ("analyze_hdmr", f"ST[{i}]", g_hdmr_ST[i], s_hdmr_ST[i], analytical_ST[i], match)
+        )
 
     # --- HDMR gsax vs analytical ---
     for i in range(D):
@@ -212,17 +220,23 @@ def benchmark_correctness() -> bool:
             ok = abs(g_hdmr_S1[i]) < 0.1
         else:
             ok = abs(g_hdmr_S1[i] - analytical_S1[i]) / abs(analytical_S1[i]) < 0.30
-        rows.append(("hdmr vs analyt.", f"S1[{i}]", g_hdmr_S1[i], float("nan"), analytical_S1[i], bool(ok)))
+        rows.append(
+            ("hdmr vs analyt.", f"S1[{i}]", g_hdmr_S1[i], float("nan"), analytical_S1[i], bool(ok))
+        )
     for i in range(D):
         ok = abs(g_hdmr_ST[i] - analytical_ST[i]) / max(abs(analytical_ST[i]), 0.01) < 0.25
-        rows.append(("hdmr vs analyt.", f"ST[{i}]", g_hdmr_ST[i], float("nan"), analytical_ST[i], bool(ok)))
+        rows.append(
+            ("hdmr vs analyt.", f"ST[{i}]", g_hdmr_ST[i], float("nan"), analytical_ST[i], bool(ok))
+        )
 
     # --- Print correctness table ---
     all_pass = True
     print("=" * 78)
     print("CORRECTNESS CHECK  (Ishigami)")
     print("=" * 78)
-    print(f"{'Method':<22} {'Index':<8} {'gsax':>10} {'SALib':>10} {'analytical':>10} {'match':>6}")
+    print(
+        f"{'Method':<22} {'Index':<8} {'gsax':>10} {'SALib':>10} {'analytical':>10} {'match':>6}"
+    )
     print("-" * 78)
     for method, index, g_val, s_val, a_val, ok in rows:
         all_pass &= ok
@@ -262,7 +276,9 @@ def _time_salib_sobol(salib_problem, Y_np, calc_second_order: bool, T: int, K: i
     """Time SALib sobol.analyze, looping over T*K slices."""
     t0 = time.perf_counter()
     if T == 1 and K == 1:
-        salib_sobol.analyze(salib_problem, Y_np, calc_second_order=calc_second_order, print_to_console=False)
+        salib_sobol.analyze(
+            salib_problem, Y_np, calc_second_order=calc_second_order, print_to_console=False
+        )
     elif T == 1:
         for k in range(K):
             salib_sobol.analyze(
@@ -298,7 +314,9 @@ def _time_salib_hdmr(salib_problem, X_np, Y_np, T: int, K: int) -> float:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         if T == 1 and K == 1:
-            salib_hdmr.analyze(salib_problem, X_np, Y_np, maxorder=2, maxiter=100, print_to_console=False)
+            salib_hdmr.analyze(
+                salib_problem, X_np, Y_np, maxorder=2, maxiter=100, print_to_console=False
+            )
         elif T == 1:
             for k in range(K):
                 salib_hdmr.analyze(
@@ -392,7 +410,9 @@ def benchmark_timing(base_n: int = 1024) -> None:
         timing_rows.append((scenario_label, "analyze_hdmr", g_time * 1e3, s_time * 1e3, speedup))
 
     # --- Print timing table ---
-    print(f"\n{'Scenario (TxK)':<16} {'Method':<20} {'gsax (ms)':>12} {'SALib (ms)':>12} {'speedup':>10}")
+    print(
+        f"\n{'Scenario (TxK)':<16} {'Method':<20} {'gsax (ms)':>12} {'SALib (ms)':>12} {'speedup':>10}"
+    )
     print("-" * 72)
     for scenario, method, g_ms, s_ms, sp in timing_rows:
         print(f"{scenario:<16} {method:<20} {g_ms:>10.1f}   {s_ms:>10.1f}   {sp:>8.1f}x")
