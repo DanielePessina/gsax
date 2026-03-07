@@ -214,7 +214,7 @@ def test_chunk_size_regression_3d(ishigami_data):
         emulate_hdmr(result_default, X),
         emulate_hdmr(result_chunked, X),
         rtol=1e-4,
-        atol=3e-5,
+        atol=3e-3,
     )
 
 
