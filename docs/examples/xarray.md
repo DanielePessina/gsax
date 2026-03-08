@@ -1,135 +1,119 @@
 # xarray Labeled Output
 
-gsax results can be converted to labeled `xarray.Dataset` objects for intuitive access by parameter name, output name, and time coordinate.
+`to_dataset()` turns `gsax` results into labeled `xarray.Dataset` objects so
+you can select by parameter name, output name, time coordinate, and term label
+instead of raw integer axes.
 
-## Basic Usage
+## Self-contained setup
 
 ```python
+import jax
+import jax.numpy as jnp
+import numpy as np
 import gsax
-from gsax.benchmarks.ishigami import PROBLEM, evaluate
 
-sampling_result = gsax.sample(PROBLEM, n_samples=4096, seed=42)
-Y = evaluate(sampling_result.samples)
-result = gsax.analyze(sampling_result, Y)
-
-# Convert to xarray Dataset
-ds = result.to_dataset()
-print(ds)
-# <xarray.Dataset>
-# Dimensions:  (param: 3, param_i: 3, param_j: 3)
-# Coordinates:
-#   * param     (param) <U2 'x1' 'x2' 'x3'
-#   * param_i   (param_i) <U2 'x1' 'x2' 'x3'
-#   * param_j   (param_j) <U2 'x1' 'x2' 'x3'
-# Data variables:
-#     S1        (param) float32 ...
-#     ST        (param) float32 ...
-#     S2        (param_i, param_j) float32 ...
-
-# Access by name
-ds.S1.sel(param="x1")       # first-order index for x1
-ds.S2.sel(param_i="x1", param_j="x2")  # second-order interaction
-```
-
-## Multi-Output with Named Outputs
-
-Label your outputs using `output_names` on the `Problem`:
-
-```python
 problem = gsax.Problem.from_dict(
     {
         "amplitude": (0.5, 2.0),
         "frequency": (1.0, 5.0),
         "damping": (0.01, 0.5),
     },
-    output_names=("temperature", "pressure"),
+    output_names=("displacement", "velocity"),
 )
 
-# ... run analysis with (N, 2) output ...
+time_values = np.linspace(0.0, 5.0, 30)
 
-ds = result.to_dataset()
-# Dimensions: (output: 2, param: 3)
 
-ds.S1.sel(param="amplitude", output="temperature")
-ds.ST.sel(output="pressure")
-```
+def model(X):
+    amp = X[:, 0, None]
+    freq = X[:, 1, None]
+    damping = X[:, 2, None]
+    tt = jnp.asarray(time_values)[None, :]
 
-If `output_names` is not set, outputs are labeled `y0, y1, ...` automatically.
+    displacement = amp * jnp.sin(2 * jnp.pi * freq * tt) * jnp.exp(-damping * tt)
+    velocity = amp * jnp.cos(2 * jnp.pi * freq * tt) * jnp.exp(-damping * tt)
+    return jnp.stack([displacement, velocity], axis=-1)  # (N, T, K)
 
-## Time-Series with Custom Coordinates
 
-For 3-D results `(T, K, D)`, pass time coordinate values:
+sampling_result = gsax.sample(problem, n_samples=2048, seed=42)
+X_sobol = jnp.asarray(sampling_result.samples)
+Y_sobol = model(X_sobol)
 
-```python
-import numpy as np
-
-t = np.linspace(0, 5, 50)
-
-# ... run analysis with (N, T, K) output ...
-
-ds = result.to_dataset(time_coords=t)
-# Dimensions: (time: 50, output: K, param: D)
-
-# Select a specific time and output
-ds.S1.sel(time=2.5, method="nearest")
-ds.ST.sel(param="frequency", output="temperature")
-```
-
-Without `time_coords`, integer indices `0, 1, 2, ...` are used.
-
-## Confidence Intervals
-
-Bootstrap confidence intervals are split into separate `_lower` and `_upper` variables:
-
-```python
-import jax
-
-result = gsax.analyze(
-    sampling_result, Y,
-    num_resamples=200,
+sobol = gsax.analyze(
+    sampling_result,
+    Y_sobol,
+    num_resamples=100,
     key=jax.random.key(0),
 )
 
-ds = result.to_dataset()
+bounds = jnp.array(problem.bounds)
+X_hdmr = jax.random.uniform(
+    jax.random.key(1),
+    (1500, problem.num_vars),
+    minval=bounds[:, 0],
+    maxval=bounds[:, 1],
+)
+Y_hdmr = model(X_hdmr)
+hdmr = gsax.analyze_hdmr(problem, X_hdmr, Y_hdmr, maxorder=2)
 
-# ds contains: S1, ST, S2, S1_lower, S1_upper, ST_lower, ST_upper, S2_lower, S2_upper
-print(ds.S1_lower.sel(param="x1"))
-print(ds.S1_upper.sel(param="x1"))
+ds_sobol = sobol.to_dataset(time_coords=time_values)
+ds_hdmr = hdmr.to_dataset(time_coords=time_values)
 ```
 
-## HDMR Results
-
-`HDMRResult.to_dataset()` works the same way. Term-indexed variables (`Sa`, `Sb`, `S`) use a `term` dimension, while `ST` uses `param`:
+## Sobol dataset
 
 ```python
-hdmr = gsax.analyze_hdmr(problem, X, Y, maxorder=2)
-ds = hdmr.to_dataset()
+print(ds_sobol)
+# <xarray.Dataset>
+# Dimensions:  (time: 30, output: 2, param: 3, param_i: 3, param_j: 3)
 
-# Access by term label
-ds.Sa.sel(term="amplitude/frequency")
-ds.ST.sel(param="amplitude")
-
-# select and rmse are included when present
-ds.select.sel(term="amplitude")
+print(ds_sobol.S1.sel(param="amplitude"))
+print(ds_sobol.ST.sel(output="velocity"))
+print(
+    ds_sobol.S2.sel(
+        time=time_values[10],
+        output="displacement",
+        param_i="amplitude",
+        param_j="frequency",
+        method="nearest",
+    )
+)
 ```
 
-## API Summary
+## Confidence intervals
 
-### `SAResult.to_dataset(time_coords=None)`
+Bootstrap intervals are split into separate dataset variables:
 
-| Dimension | Coordinates | Used by |
-|-----------|-------------|---------|
-| `param` | `problem.names` | S1, ST |
-| `output` | `problem.output_names` or `y0, y1, ...` | multi-output results |
-| `time` | `time_coords` or `0, 1, ...` | 3-D results |
-| `param_i` | `problem.names` | S2 |
-| `param_j` | `problem.names` | S2 |
+```python
+print(ds_sobol.S1_lower.sel(param="amplitude"))
+print(ds_sobol.S1_upper.sel(param="amplitude"))
+print(ds_sobol.ST_lower.sel(output="velocity"))
+```
 
-### `HDMRResult.to_dataset(time_coords=None)`
+## HDMR dataset
 
-| Dimension | Coordinates | Used by |
-|-----------|-------------|---------|
-| `term` | `self.terms` | Sa, Sb, S, select |
-| `param` | `problem.names` | ST |
-| `output` | `problem.output_names` or `y0, y1, ...` | multi-output results |
-| `time` | `time_coords` or `0, 1, ...` | 3-D results |
+`HDMRResult.to_dataset()` uses `term` for `Sa`, `Sb`, `S`, and `select`, while
+`ST` stays indexed by `param`.
+
+```python
+print(ds_hdmr.ST.sel(param="amplitude"))
+print(ds_hdmr.Sa.sel(term="amplitude/frequency"))
+print(ds_hdmr.rmse.sel(output="displacement"))
+```
+
+## Practical caveats
+
+- If `problem.output_names` is omitted, outputs are labeled `y0`, `y1`, and so
+  on.
+- Without `time_coords`, `to_dataset()` uses integer time indices.
+- Sobol `S2` becomes dataset variables with `param_i` and `param_j`.
+- `select` and `rmse` only appear on the HDMR dataset when the result contains
+  those fields.
+
+## See also
+
+- [Multi-Output & Time-Series](/examples/multi-output) for the shape rules that
+  feed into `to_dataset()`.
+- [RS-HDMR Example](/examples/hdmr) for the surrogate workflow before export.
+- [Advanced Workflow](/examples/advanced-workflow) for one page that uses both
+  Sobol and HDMR datasets on the same custom model.

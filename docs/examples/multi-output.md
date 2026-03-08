@@ -1,87 +1,100 @@
 # Multi-Output & Time-Series
 
-gsax handles multi-output and time-series models natively. All indices are computed in a single vectorized pass.
+`gsax` accepts scalar, multi-output, and time-series multi-output arrays from
+the same API. This page uses one concrete model to show both `(N, K)` and
+`(N, T, K)` layouts.
 
-## Multi-output (N, K)
-
-Pass a 2D array where K is the number of outputs:
+## Fully runnable example
 
 ```python
 import jax.numpy as jnp
+import numpy as np
 import gsax
-from gsax.benchmarks.ishigami import PROBLEM
 
-sampling_result = gsax.sample(PROBLEM, n_samples=4096, seed=42)
-X = sampling_result.samples
+problem = gsax.Problem.from_dict(
+    {
+        "amplitude": (0.5, 2.0),
+        "frequency": (1.0, 5.0),
+        "damping": (0.01, 0.5),
+        "offset": (-1.0, 1.0),
+    },
+    output_names=("displacement", "velocity"),
+)
 
-def multi_output_model(X):
-    y1 = jnp.sin(X[:, 0]) + X[:, 1] ** 2
-    y2 = X[:, 0] * X[:, 2]
-    return jnp.column_stack([y1, y2])
+time_values = np.linspace(0.0, 5.0, 40)
 
-Y = multi_output_model(X)  # (n_total, 2)
-result = gsax.analyze(sampling_result, Y)
 
-# result.S1.shape == (2, 3)  -- (K, D)
-# result.ST.shape == (2, 3)  -- (K, D)
-# result.S2.shape == (2, 3, 3)  -- (K, D, D)
+def oscillator_model(X):
+    amp = X[:, 0, None]
+    freq = X[:, 1, None]
+    damping = X[:, 2, None]
+    offset = X[:, 3, None]
+    tt = jnp.asarray(time_values)[None, :]
 
-# Access per-output indices
-print("S1 for output 0:", result.S1[0])
-print("S1 for output 1:", result.S1[1])
+    displacement = (
+        amp * jnp.sin(2 * jnp.pi * freq * tt) * jnp.exp(-damping * tt) + offset
+    )
+    velocity = amp * jnp.cos(2 * jnp.pi * freq * tt) * jnp.exp(-damping * tt)
+
+    return jnp.stack([displacement, velocity], axis=-1)  # (N, T, K=2)
+
+
+sampling_result = gsax.sample(problem, n_samples=2048, seed=42)
+X = jnp.asarray(sampling_result.samples)
+
+Y_time = oscillator_model(X)      # (N, T, K)
+Y_snapshot = Y_time[:, -1, :]     # (N, K)
+
+time_result = gsax.analyze(sampling_result, Y_time)
+snapshot_result = gsax.analyze(sampling_result, Y_snapshot)
+
+print("Time-series S1 shape:", time_result.S1.shape)      # (T, K, D)
+print("Time-series ST shape:", time_result.ST.shape)      # (T, K, D)
+print("Snapshot S1 shape:", snapshot_result.S1.shape)     # (K, D)
+print("Snapshot ST shape:", snapshot_result.ST.shape)     # (K, D)
+
+print("Displacement sensitivities at the final time step:")
+print(time_result.S1[-1, 0, :])
+
+print("Velocity sensitivities for the snapshot:")
+print(snapshot_result.S1[1, :])
 ```
 
-## Time-series (N, T, K)
+## Shape rules
 
-Pass a 3D array where T is the number of timesteps and K the number of outputs:
+- `(N,)` means scalar output.
+- `(N, K)` means multiple outputs with no time dimension.
+- `(N, T, K)` means time-series multi-output.
+- A 2D array is always treated as `(N, K)`, never `(N, T)`.
+- For a time-series with one output, reshape to `(N, T, 1)`.
+
+## Single-output edge case
 
 ```python
-def time_series_model(X):
-    # Returns (n_total, T, K) -- e.g. 50 timesteps, 4 outputs
-    ...
+# Scalar output
+Y_scalar = Y_snapshot[:, 0]      # (N,)
+scalar_result = gsax.analyze(sampling_result, Y_scalar)
+print(scalar_result.S1.shape)    # (D,)
 
-Y = time_series_model(X)  # (n_total, 50, 4)
-result = gsax.analyze(sampling_result, Y)
-
-# result.S1.shape == (50, 4, 3)  -- (T, K, D)
-# result.ST.shape == (50, 4, 3)  -- (T, K, D)
-# result.S2.shape == (50, 4, 3, 3)  -- (T, K, D, D)
-
-# S1 at timestep 10, output 2, parameter 0
-print(result.S1[10, 2, 0])
+# Time-series with one output
+Y_one_output = Y_time[:, :, :1]  # (N, T, 1)
+one_output_result = gsax.analyze(sampling_result, Y_one_output)
+print(one_output_result.S1.shape)  # (T, 1, D)
 ```
 
-## Edge Cases: Single Output or Single Timestep
+## Practical caveats
 
-A 2D array is **always** interpreted as `(N, K)` — multiple outputs, no time dimension. This matters when your model has only one output or only one timestep:
+- Named outputs come from `problem.output_names`, so set them up early if you
+  plan to export with `to_dataset()`.
+- `calc_second_order=False` removes `S2`, which can be a useful tradeoff for
+  large `(T, K)` outputs when you only need `S1` and `ST`.
+- The same shape rules apply to `gsax.analyze_hdmr()`.
 
-```python
-# Single output, no time dimension — pass a 1D array
-Y = my_model(X)          # shape (n_total,)
-result = gsax.analyze(sampling_result, Y)
-# result.S1.shape == (D,)
+## See also
 
-# Single output WITH time dimension — reshape to (N, T, 1)
-Y = my_model(X)          # shape (n_total, T) — e.g. 50 timesteps
-Y = Y[:, :, None]        # reshape to (n_total, 50, 1)
-result = gsax.analyze(sampling_result, Y)
-# result.S1.shape == (50, 1, D)  — (T, K=1, D)
-
-# Multiple outputs, single timestep — just pass (N, K)
-Y = my_model(X)          # shape (n_total, 4) — 4 outputs
-result = gsax.analyze(sampling_result, Y)
-# result.S1.shape == (4, D)  — (K, D)
-# No need for a time dimension; (N, 1, 4) also works but is unnecessary.
-```
-
-The same rules apply to `gsax.analyze_hdmr()`.
-
-## Shape Reference
-
-| Y shape | S1 / ST | S2 |
-|---------|---------|-----|
-| `(N,)` | `(D,)` | `(D, D)` |
-| `(N, K)` | `(K, D)` | `(K, D, D)` |
-| `(N, T, K)` | `(T, K, D)` | `(T, K, D, D)` |
-
-D is always the last axis. When using bootstrap, confidence arrays prepend a leading dimension of 2: `S1_conf.shape == (2, ..., D)`.
+- [xarray Labeled Output](/examples/xarray) for named access by parameter,
+  output, and time coordinate.
+- [RS-HDMR Example](/examples/hdmr) for the same shape rules on the surrogate
+  workflow.
+- [Advanced Workflow](/examples/advanced-workflow) for a bigger custom model
+  that combines Sobol, HDMR, emulator prediction, and dataset export.

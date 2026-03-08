@@ -1,6 +1,9 @@
 # Bootstrap Confidence Intervals
 
-Use bootstrap resampling to quantify uncertainty in the estimated indices.
+Use bootstrap resampling when you need uncertainty bounds for Sobol indices,
+not just point estimates.
+
+## Scalar-output bootstrap
 
 ```python
 import jax
@@ -18,25 +21,42 @@ result = gsax.analyze(
     key=jax.random.key(0),
 )
 
-# Point estimates
 print("S1:", result.S1)
 print("ST:", result.ST)
-
-# Confidence intervals -- shape (2, D) where [0]=lower, [1]=upper
 print("S1 lower:", result.S1_conf[0])
 print("S1 upper:", result.S1_conf[1])
-
 print("ST lower:", result.ST_conf[0])
 print("ST upper:", result.ST_conf[1])
-
-# S2 confidence (if calc_second_order=True)
 print("S2 lower:", result.S2_conf[0])
 print("S2 upper:", result.S2_conf[1])
 ```
 
-## Notes
+## Confidence-interval shapes
 
-- The bootstrap is fully vectorized in JAX and runs ~14.5x faster than SALib's sequential approach.
-- Set `num_resamples=0` (the default) to skip bootstrap entirely when you only need point estimates.
-- A `jax.random.key` is required when `num_resamples > 0`.
-- For multi-output results, the confidence arrays follow the same shape rules with a leading dimension of 2. For example, if `S1.shape == (K, D)`, then `S1_conf.shape == (2, K, D)`.
+The bootstrap adds a leading dimension of 2 for `[lower, upper]`:
+
+- scalar output: `S1_conf.shape == (2, D)`
+- multi-output: `S1_conf.shape == (2, K, D)`
+- time-series multi-output: `S1_conf.shape == (2, T, K, D)`
+
+`S2_conf` follows the same rule with two trailing parameter axes.
+
+## Practical caveats
+
+- A `jax.random.key(...)` is required when `num_resamples > 0`.
+- Set `num_resamples=0` to skip bootstrap entirely when you only need point
+  estimates.
+- If `calc_second_order=False` during sampling, then `result.S2` and
+  `result.S2_conf` are both `None`.
+- Bootstrap intervals follow the same output-shape rules as the point estimates,
+  so the page on [Multi-Output & Time-Series](/examples/multi-output) is the
+  right companion when your model is not scalar.
+
+## See also
+
+- [Save and Reload Samples](/examples/save-load) if you want to bootstrap a
+  stored design.
+- [Multi-Output & Time-Series](/examples/multi-output) for concrete shape
+  examples on `(N, K)` and `(N, T, K)` outputs.
+- [xarray Labeled Output](/examples/xarray) for exporting confidence intervals
+  as `_lower` and `_upper` dataset variables.

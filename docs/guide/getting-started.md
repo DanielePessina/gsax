@@ -75,8 +75,15 @@ expanded Saltelli layout cannot be reconstructed with an identity mapping alone.
 
 ## What's Next?
 
-- [Methods](/guide/methods) -- understand Sobol vs HDMR and when to use each
-- [Save and Reload Samples](/examples/save-load) -- persist `SamplingResult` for later runs
-- [xarray Output](/examples/xarray) -- labeled results with named dimensions
-- [Examples](/examples/basic) -- copy-pasteable code for common workflows
-- [API Reference](/api/problem) -- full parameter and return-type documentation
+Start with the core workflow, then branch into the example that matches your
+next problem:
+
+- [Methods](/guide/methods) -- compare Sobol sampling and RS-HDMR before choosing a workflow
+- [Basic Example (Ishigami)](/examples/basic) -- run the canonical scalar-output Sobol analysis end to end
+- [Save and Reload Samples](/examples/save-load) -- persist a `SamplingResult` and reuse it across runs
+- [Bootstrap CIs](/examples/bootstrap) -- quantify uncertainty with confidence intervals around `S1`, `ST`, and `S2`
+- [Multi-Output & Time-Series](/examples/multi-output) -- move from scalar outputs to `(N, K)` and `(N, T, K)` analyses
+- [xarray Output](/examples/xarray) -- export labeled datasets with named parameters, outputs, and time coordinates
+- [RS-HDMR](/examples/hdmr) -- switch to surrogate-based analysis when you already have arbitrary `(X, Y)` pairs
+- [Advanced Workflow](/examples/advanced-workflow) -- follow the full custom-model path with named outputs, Sobol, HDMR, emulation, and `to_dataset()`
+- [API Reference](/api/) -- browse the single-page reference for signatures, shape contracts, and result objects
