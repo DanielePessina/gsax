@@ -9,37 +9,27 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Examples', link: '/examples/basic' },
-      { text: 'API', link: '/api/problem' },
+      { text: 'API', link: '/api/' },
     ],
 
     sidebar: {
-      '/guide/': {
-        base: '/guide/',
-        items: [
-          { text: 'Getting Started', link: '/getting-started' },
-          { text: 'Methods', link: '/methods' },
-          { text: 'Benchmarks', link: '/benchmarks' },
-        ],
-      },
-      '/examples/': {
-        base: '/examples/',
-        items: [
-          { text: 'Basic (Ishigami)', link: '/basic' },
-          { text: 'Multi-Output', link: '/multi-output' },
-          { text: 'Bootstrap CIs', link: '/bootstrap' },
-          { text: 'RS-HDMR', link: '/hdmr' },
-          { text: 'xarray Output', link: '/xarray' },
-        ],
-      },
-      '/api/': {
-        base: '/api/',
-        items: [
-          { text: 'Problem', link: '/problem' },
-          { text: 'Sampling', link: '/sampling' },
-          { text: 'Analyze (Sobol)', link: '/analyze' },
-          { text: 'HDMR', link: '/hdmr' },
-        ],
-      },
+      '/guide/': [
+        { text: 'Getting Started', link: '/guide/getting-started' },
+        { text: 'Methods', link: '/guide/methods' },
+        { text: 'Benchmarks', link: '/guide/benchmarks' },
+      ],
+      '/examples/': [
+        { text: 'Basic (Ishigami)', link: '/examples/basic' },
+        { text: 'Save & Reload', link: '/examples/save-load' },
+        { text: 'Bootstrap CIs', link: '/examples/bootstrap' },
+        { text: 'Multi-Output & Time-Series', link: '/examples/multi-output' },
+        { text: 'xarray Output', link: '/examples/xarray' },
+        { text: 'RS-HDMR', link: '/examples/hdmr' },
+        { text: 'Advanced Workflow', link: '/examples/advanced-workflow' },
+      ],
+      '/api/': [
+        { text: 'API Reference', link: '/api/' },
+      ],
     },
 
     socialLinks: [

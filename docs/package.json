@@ -4,7 +4,10 @@
   "scripts": {
     "docs:dev": "vitepress dev",
     "docs:build": "vitepress build",
-    "docs:preview": "vitepress preview"
+    "docs:preview": "vitepress preview",
+    "docs:check:api": "python3 ../scripts/check_api_docs_coverage.py",
+    "docs:check:pager": "python3 ../scripts/check_vitepress_pager.py",
+    "docs:check": "npm run docs:check:api && npm run docs:build && npm run docs:check:pager"
   },
   "devDependencies": {
     "vitepress": "^1.6.3"

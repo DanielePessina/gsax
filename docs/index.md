@@ -18,6 +18,8 @@ features:
     details: First-order, total-order, and second-order indices via Saltelli sampling with Sobol quasi-random sequences.
   - title: RS-HDMR
     details: Surrogate-based sensitivity analysis that works with any (X, Y) pairs. Includes a built-in emulator for prediction.
+  - title: Save & Reload Samples
+    details: Persist unique sample matrices plus Saltelli reconstruction metadata with `SamplingResult.save()` and reload them later with `gsax.load()`.
   - title: Multi-Output & Time-Series
     details: Pass scalar, (N, K), or (N, T, K) outputs. All indices are computed in a single vectorized pass.
   - title: Up to 929× Faster than SALib

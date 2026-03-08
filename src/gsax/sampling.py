@@ -10,14 +10,21 @@ This avoids wasted model evaluations in low-dimensional cases where the
 expanded Saltelli design contains exact duplicate rows.
 """
 
+from __future__ import annotations
+
+import json
 import math
 from dataclasses import dataclass
+from importlib.metadata import version as _pkg_version
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.stats.qmc import Sobol
 
 from gsax.problem import Problem
+
+_SAMPLE_FORMATS = {"csv", "txt", "xlsx", "parquet", "pkl"}
 
 
 @dataclass(frozen=True)
@@ -68,6 +75,60 @@ class SamplingResult:
         for idx, name in enumerate(self.problem.names):
             data[name] = self.samples[:, idx]
         return pd.DataFrame(data, copy=False)
+
+    def save(self, path: str | Path, *, format: str = "csv") -> None:
+        """Serialize samples and metadata to disk.
+
+        Args:
+            path: File stem (no extension), e.g. ``"experiment"`` or
+                ``"data/experiment"``.
+            format: One of ``"csv"``, ``"txt"``, ``"xlsx"``, ``"parquet"``,
+                ``"pkl"``.
+        """
+        if format not in _SAMPLE_FORMATS:
+            raise ValueError(
+                f"Unsupported format {format!r}. Choose from {sorted(_SAMPLE_FORMATS)}."
+            )
+
+        stem = Path(path)
+        # DataFrame without SampleID — just parameter columns
+        df = pd.DataFrame(self.samples, columns=list(self.problem.names))
+
+        # --- write samples file ---
+        sample_path = stem.with_suffix(f".{format}")
+        _write_samples(df, sample_path, format)
+
+        # --- identity mapping check ---
+        identity = bool(
+            np.array_equal(
+                self.expanded_to_unique,
+                np.arange(self.expanded_n_total, dtype=self.expanded_to_unique.dtype),
+            )
+        )
+
+        # --- write JSON metadata ---
+        meta = {
+            "gsax_version": _pkg_version("gsax"),
+            "problem": {
+                "names": list(self.problem.names),
+                "bounds": [list(b) for b in self.problem.bounds],
+                "output_names": list(self.problem.output_names)
+                if self.problem.output_names is not None
+                else None,
+            },
+            "base_n": self.base_n,
+            "calc_second_order": self.calc_second_order,
+            "expanded_n_total": self.expanded_n_total,
+            "identity_mapping": identity,
+            "sample_format": format,
+        }
+        json_path = stem.with_suffix(".json")
+        json_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+        # --- write expanded_to_unique (skip for identity mappings) ---
+        if not identity:
+            npz_path = stem.with_suffix(".npz")
+            np.savez_compressed(npz_path, expanded_to_unique=self.expanded_to_unique)
 
 
 def _next_power_of_2(n: int) -> int:
@@ -256,5 +317,130 @@ def sample(
         base_n=base_n,
         n_params=D,
         calc_second_order=calc_second_order,
+        problem=problem,
+    )
+
+
+# ---------------------------------------------------------------------------
+# I/O helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_samples(df: pd.DataFrame, path: Path, fmt: str) -> None:
+    """Write the samples DataFrame to disk in the requested format."""
+    if fmt == "csv":
+        df.to_csv(path, index=False)
+    elif fmt == "txt":
+        np.savetxt(
+            path,
+            df.values,
+            header=" ".join(df.columns),
+            comments="",
+        )
+    elif fmt == "xlsx":
+        try:
+            df.to_excel(path, index=False)
+        except ImportError as exc:
+            raise ImportError(
+                "Writing xlsx requires openpyxl. Install it with: uv add openpyxl"
+            ) from exc
+    elif fmt == "parquet":
+        try:
+            df.to_parquet(path, index=False)
+        except ImportError as exc:
+            raise ImportError(
+                "Writing parquet requires pyarrow. Install it with: uv add pyarrow"
+            ) from exc
+    elif fmt == "pkl":
+        df.to_pickle(path)
+
+
+def _read_samples(path: Path, fmt: str) -> np.ndarray:
+    """Read samples back from disk and return as a NumPy array."""
+    if fmt == "csv":
+        return pd.read_csv(path).values
+    elif fmt == "txt":
+        arr = np.loadtxt(path, skiprows=1)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        return arr
+    elif fmt == "xlsx":
+        try:
+            return pd.read_excel(path).values
+        except ImportError as exc:
+            raise ImportError(
+                "Reading xlsx requires openpyxl. Install it with: uv add openpyxl"
+            ) from exc
+    elif fmt == "parquet":
+        try:
+            return pd.read_parquet(path).values
+        except ImportError as exc:
+            raise ImportError(
+                "Reading parquet requires pyarrow. Install it with: uv add pyarrow"
+            ) from exc
+    elif fmt == "pkl":
+        return pd.read_pickle(path).values
+    raise ValueError(f"Unsupported format {fmt!r}")
+
+
+def load(path: str | Path, *, format: str = "csv") -> SamplingResult:
+    """Load a previously saved :class:`SamplingResult` from disk.
+
+    Args:
+        path: File stem (no extension) matching what was passed to
+            :meth:`SamplingResult.save`.
+        format: Sample file format (must match the format used when saving).
+
+    Returns:
+        Reconstructed :class:`SamplingResult`.
+    """
+    stem = Path(path)
+    json_path = stem.with_suffix(".json")
+    if not json_path.exists():
+        raise FileNotFoundError(f"Metadata file not found: {json_path}")
+
+    meta = json.loads(json_path.read_text(encoding="utf-8"))
+
+    # Reconstruct Problem
+    prob_meta = meta["problem"]
+    output_names = (
+        tuple(prob_meta["output_names"])
+        if prob_meta["output_names"] is not None
+        else None
+    )
+    problem = Problem(
+        names=tuple(prob_meta["names"]),
+        bounds=tuple(tuple(b) for b in prob_meta["bounds"]),
+        output_names=output_names,
+    )
+
+    # Read samples
+    sample_path = stem.with_suffix(f".{format}")
+    samples = _read_samples(sample_path, format)
+
+    n_unique = samples.shape[0]
+    sample_ids = np.arange(n_unique, dtype=np.int64)
+
+    # Reconstruct expanded_to_unique
+    if meta["identity_mapping"]:
+        expanded_to_unique = np.arange(
+            meta["expanded_n_total"], dtype=np.int64
+        )
+    else:
+        npz_path = stem.with_suffix(".npz")
+        if not npz_path.exists():
+            raise FileNotFoundError(
+                f"Expected mapping file not found: {npz_path}"
+            )
+        expanded_to_unique = np.load(npz_path)["expanded_to_unique"]
+
+    return SamplingResult(
+        samples=samples,
+        sample_ids=sample_ids,
+        expanded_n_total=meta["expanded_n_total"],
+        expanded_to_unique=expanded_to_unique,
+        base_n=meta["base_n"],
+        n_params=problem.num_vars,
+        calc_second_order=meta["calc_second_order"],
         problem=problem,
     )

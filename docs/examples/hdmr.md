@@ -1,8 +1,9 @@
 # RS-HDMR Example
 
-RS-HDMR works with any set of (X, Y) pairs -- no structured sampling design required.
+Use HDMR when you already have arbitrary `(X, Y)` pairs or when you want a
+surrogate that can predict at new inputs.
 
-## Sensitivity Analysis
+## Sensitivity analysis from random samples
 
 ```python
 import jax
@@ -10,48 +11,63 @@ import jax.numpy as jnp
 import gsax
 from gsax.benchmarks.ishigami import PROBLEM, evaluate
 
-# Generate random input samples (any sampling method works)
 key = jax.random.PRNGKey(42)
 bounds = jnp.array(PROBLEM.bounds)
 X = jax.random.uniform(key, (2000, 3), minval=bounds[:, 0], maxval=bounds[:, 1])
-
-# Evaluate the model
 Y = evaluate(X)
 
-# Compute HDMR indices
 result = gsax.analyze_hdmr(
-    PROBLEM, X, Y,
+    PROBLEM,
+    X,
+    Y,
     maxorder=2,
-    chunk_size=64,
+    chunk_size=256,
 )
 
-# Sobol-compatible indices
 print("S1:", result.S1)
 print("ST:", result.ST)
-
-# HDMR-specific per-term decomposition
-print("Terms:", result.terms)  # ('x1', 'x2', 'x3', 'x1/x2', 'x1/x3', 'x2/x3')
-print("Sa:", result.Sa)        # structural (uncorrelated) contribution
-print("Sb:", result.Sb)        # correlative contribution
+print("Terms:", result.terms)
+print("Sa:", result.Sa)
+print("Sb:", result.Sb)
+print("RMSE:", result.rmse)
 ```
 
-## Using the Emulator
-
-The fitted HDMR surrogate can predict at new input points:
+## Use the emulator
 
 ```python
-# Predict at the original inputs (sanity check)
-Y_pred = gsax.emulate_hdmr(result, X)
-
-# Predict at new inputs
-key2 = jax.random.PRNGKey(99)
-X_new = jax.random.uniform(key2, (500, 3), minval=bounds[:, 0], maxval=bounds[:, 1])
-Y_new = gsax.emulate_hdmr(result, X_new)
+Y_pred = gsax.emulate_hdmr(result, X[:5])
+print("Prediction shape:", Y_pred.shape)
+print("Absolute residuals:", jnp.abs(Y[:5] - Y_pred))
 ```
 
-## When to Use HDMR
+## What to look at
 
-- Model evaluations are expensive and you want to reuse existing runs
-- Inputs may be correlated
-- You need a fast surrogate for prediction at new inputs
-- You want to understand both structural and correlative contributions to variance
+- `result.S1` is the structural first-order contribution extracted from
+  `result.Sa`.
+- `result.ST` is the total contribution per parameter after summing all terms
+  that involve that parameter.
+- `result.terms` tells you which columns in `Sa`, `Sb`, and `S` correspond to
+  first-order and interaction terms.
+- `result.rmse` helps you decide whether the fitted surrogate is accurate enough
+  for downstream interpretation.
+
+## Practical caveats
+
+- `analyze_hdmr()` accepts `(N,)`, `(N, K)`, and `(N, T, K)` outputs, so the
+  same shape rules from [Multi-Output & Time-Series](/examples/multi-output)
+  still apply.
+- HDMR does not use a structured Saltelli design; if you want exact Sobol
+  estimators on independent inputs, start from [Basic Example](/examples/basic)
+  instead.
+- If you want labeled `term`, `param`, `time`, and `output` coordinates, call
+  `result.to_dataset()` and continue with
+  [xarray Labeled Output](/examples/xarray).
+
+## See also
+
+- [Methods](/guide/methods) for the conceptual difference between Sobol and
+  HDMR.
+- [xarray Labeled Output](/examples/xarray) for exporting `Sa`, `Sb`, `S`, and
+  `ST` to a labeled dataset.
+- [Advanced Workflow](/examples/advanced-workflow) for a custom time-series
+  model that runs Sobol and HDMR side by side.

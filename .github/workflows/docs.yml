@@ -22,12 +22,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm ci
         working-directory: docs
-      - run: npm run docs:build
+      - run: npm run docs:check
         working-directory: docs
       - uses: actions/upload-pages-artifact@v3
         with:

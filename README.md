@@ -21,6 +21,7 @@
 - Bootstrap confidence intervals with JAX-accelerated resampling
 - Automatic data cleaning: non-finite values (NaN/Inf) are detected and dropped by group
 - **xarray integration** — `to_dataset()` on results for labeled, named dimensions (`param`, `output`, `time`)
+- Save and reload Sobol sample sets with metadata via `SamplingResult.save()` and `gsax.load()`
 - Built-in Ishigami benchmark function with known analytical solutions
 
 ## Installation
@@ -147,6 +148,29 @@ sampling_result = gsax.sample(
 # sampling_result.expanded_n_total is the internal Saltelli row count
 ```
 
+### Save and reload samples
+
+If you want to generate samples once and reuse them later, persist the
+`SamplingResult` to disk and reconstruct it with `gsax.load()`:
+
+```python
+sampling_result.save("runs/ishigami_samples", format="csv")
+
+restored = gsax.load("runs/ishigami_samples", format="csv")
+Y = my_model(restored.samples)
+result = gsax.analyze(restored, Y)
+```
+
+`path` is a file stem, not a full filename. The call above writes:
+
+- `runs/ishigami_samples.csv` with the unique sample matrix
+- `runs/ishigami_samples.json` with problem and Saltelli metadata
+- `runs/ishigami_samples.npz` only when the internal expanded-to-unique mapping is non-trivial
+
+Supported formats are `csv`, `txt`, `xlsx`, `parquet`, and `pkl`. Use the
+same `format` value when calling `gsax.load()`. `xlsx` requires `openpyxl`,
+and `parquet` requires `pyarrow`.
+
 ### Analyze results
 
 ```python
@@ -230,411 +254,28 @@ result = gsax.analyze(sampling_result, Y)
 
 ## API Reference
 
-### `Problem`
-
-Immutable dataclass defining the parameter space.
-
-```python
-@dataclass(frozen=True)
-class Problem:
-    names: tuple[str, ...]                    # parameter names
-    bounds: tuple[tuple[float, float], ...]   # (low, high) for each parameter
-    output_names: tuple[str, ...] | None = None  # optional output labels for xarray
-```
-
-| Attribute / Method | Type | Description |
-|---|---|---|
-| `names` | `tuple[str, ...]` | Parameter name for each of the D dimensions. |
-| `bounds` | `tuple[tuple[float, float], ...]` | Lower and upper bound for each parameter. Length must match `names`. |
-| `output_names` | `tuple[str, ...] \| None` | Optional labels for the output dimension. Used by `to_dataset()` as coordinate values. Defaults to `y0, y1, ...` if not set. |
-| `from_dict(params, output_names=None)` | classmethod | Construct from `dict[str, tuple[float, float]]`. Keys become `names`, values become `bounds`. |
-| `num_vars` | `int` (property) | D -- the number of parameters. Equivalent to `len(names)`. |
-
-### `gsax.sample()`
-
-Generate a unique Sobol/Saltelli sample matrix using Sobol quasi-random sequences.
-
-```python
-def sample(
-    problem: Problem,
-    n_samples: int,               # minimum desired unique model evaluations
-    *,
-    calc_second_order: bool = True,
-    scramble: bool = True,
-    seed: int | np.random.Generator | None = None,
-    verbose: bool = True,
-) -> SamplingResult
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `problem` | `Problem` | required | The parameter space definition. |
-| `n_samples` | `int` | required | Minimum number of unique model evaluations desired. The actual `base_n` (N) is increased until the deduplicated sample matrix has at least this many rows. |
-| `calc_second_order` | `bool` | `True` | Whether to generate the extra Saltelli cross-matrices needed for second-order indices. When `True`, the expanded Saltelli layout has `expanded_n_total = N * (2D + 2)`. When `False`, `expanded_n_total = N * (D + 2)`. |
-| `scramble` | `bool` | `True` | Apply Owen scrambling to the Sobol sequence for better uniformity. |
-| `seed` | `int \| np.random.Generator \| None` | `None` | Seed for reproducibility of the scrambled Sobol sequence. |
-| `verbose` | `bool` | `True` | Print a compact summary showing the requested unique count, returned unique count, expanded Saltelli row count, and duplicates removed. |
-
-**Returns:** `SamplingResult`
-
-### `SamplingResult`
-
-Immutable dataclass returned by `gsax.sample()`. Carries the unique sample matrix and all metadata needed by `gsax.analyze()` to reconstruct the expanded Saltelli layout internally.
-
-```python
-@dataclass(frozen=True)
-class SamplingResult:
-    samples: np.ndarray            # (n_total, D) — unique rows scaled to bounds
-    sample_ids: np.ndarray         # (n_total,) stable unique row IDs
-    expanded_n_total: int          # total Saltelli rows after reconstruction
-    expanded_to_unique: np.ndarray # (expanded_n_total,) expanded row -> unique row
-    base_n: int                    # N, always a power of 2
-    n_params: int                  # D = number of parameters
-    calc_second_order: bool        # whether S2 matrices were generated
-    problem: Problem               # the Problem used to generate samples
-```
-
-| Field / Property | Type | Shape / Value | Description |
-|---|---|---|---|
-| `samples` | `np.ndarray` | `(n_total, D)` | Unique sample matrix with values scaled to the parameter bounds defined in `problem`. Pass this to your model. |
-| `sample_ids` | `np.ndarray` | `(n_total,)` | Stable integer IDs `0..n_total-1` aligned with `samples`. |
-| `expanded_n_total` | `int` | `N * step` | Total Saltelli row count used internally by `analyze()`. |
-| `expanded_to_unique` | `np.ndarray` | `(expanded_n_total,)` | Index map from each expanded Saltelli row to the corresponding unique row in `samples`. |
-| `base_n` | `int` | N | The base Sobol sample count, always a power of 2. |
-| `n_params` | `int` | D | Number of parameters (same as `problem.num_vars`). |
-| `calc_second_order` | `bool` | | Whether second-order cross-matrices are included in the expanded Saltelli layout. |
-| `problem` | `Problem` | | The Problem instance used during sampling. |
-| `samples_df` | `pd.DataFrame` (property) | `(n_total, D + 1)` | Tabular view of the unique samples with `SampleID` followed by parameter columns. |
-| `n_total` | `int` (property) | `samples.shape[0]` | Total number of unique rows in `samples`. |
-
-### `gsax.analyze()`
-
-Compute Sobol sensitivity indices from model output.
-
-```python
-def analyze(
-    sampling_result: SamplingResult,
-    Y: Array,                    # model output
-    *,
-    num_resamples: int = 0,      # 0 = no bootstrap
-    conf_level: float = 0.95,
-    key: Array | None = None,    # JAX PRNG key, required when num_resamples > 0
-    chunk_size: int = 2048,
-) -> SAResult
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `sampling_result` | `SamplingResult` | required | The result from `gsax.sample()`. |
-| `Y` | `Array` | required | Model output evaluated on the unique rows in `sampling_result.samples`. Shape must be `(n_total,)`, `(n_total, K)`, or `(n_total, T, K)` where `n_total` matches `sampling_result.n_total`. A 2D array is always read as `(N, K)` — for time-series with a single output, reshape to `(N, T, 1)`. |
-| `num_resamples` | `int` | `0` | Number of bootstrap resamples. Set to 0 to skip bootstrap (no confidence intervals). |
-| `conf_level` | `float` | `0.95` | Confidence level for bootstrap intervals (e.g. 0.95 for 95% CI). |
-| `key` | `Array \| None` | `None` | JAX PRNG key (e.g. `jax.random.key(0)`). **Required** when `num_resamples > 0`. |
-| `chunk_size` | `int` | `2048` | Number of output columns to process per `jit(vmap(...))` call. Lower values reduce peak memory; higher values improve throughput. |
-
-**Returns:** `SAResult`
-
-### `SAResult`
-
-Dataclass holding all computed sensitivity indices and optional confidence intervals.
-
-```python
-@dataclass
-class SAResult:
-    S1: Array                          # first-order Sobol indices
-    ST: Array                          # total-order Sobol indices
-    S2: Array | None                   # second-order interaction matrix
-    problem: Problem                   # the Problem definition
-    S1_conf: Array | None = None       # bootstrap CI bounds for S1
-    ST_conf: Array | None = None       # bootstrap CI bounds for ST
-    S2_conf: Array | None = None       # bootstrap CI bounds for S2
-    nan_counts: dict[str, int] | None = None  # diagnostic NaN counts
-```
-
-See the next sections for detailed field documentation and shape rules.
-
-### `gsax.analyze_hdmr()`
-
-Compute sensitivity indices via RS-HDMR with B-spline surrogate modelling. Works with any (X, Y) pairs.
-
-```python
-def analyze_hdmr(
-    problem: Problem,
-    X: Array,                          # (N, D) input samples
-    Y: Array,                          # (N,), (N, K), or (N, T, K)
-    *,
-    maxorder: int = 2,                 # 1, 2, or 3
-    maxiter: int = 100,                # backfitting iterations
-    m: int = 2,                        # B-spline intervals (basis = m+3 per dim)
-    lambdax: float = 0.01,            # regularization
-    chunk_size: int = 2048,            # max T*K outputs per jit(vmap(...)) batch
-) -> HDMRResult
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `problem` | `Problem` | required | Parameter names and bounds (used to normalize X to [0, 1]). |
-| `X` | `Array` | required | Input samples, shape `(N, D)`. |
-| `Y` | `Array` | required | Model outputs. Shape `(N,)`, `(N, K)`, or `(N, T, K)`. A 2D array is always read as `(N, K)` — for time-series with a single output, reshape to `(N, T, 1)`. |
-| `maxorder` | `int` | `2` | Maximum expansion order. 1 = main effects only, 2 = + pairwise interactions, 3 = + triple interactions. |
-| `maxiter` | `int` | `100` | Maximum backfitting iterations for first-order terms. |
-| `m` | `int` | `2` | Number of B-spline intervals. Each dimension gets `m + 3` basis functions. |
-| `lambdax` | `float` | `0.01` | Tikhonov regularization parameter. |
-| `chunk_size` | `int` | `2048` | Number of `(T, K)` output combinations to process per `jit(vmap(...))` call. Lower values reduce peak memory; higher values improve throughput. |
-
-**Returns:** `HDMRResult`
-
-### `gsax.emulate_hdmr()`
-
-Predict at new input points using the fitted HDMR surrogate.
-
-```python
-def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `result` | `HDMRResult` | Result from `analyze_hdmr()`. |
-| `X_new` | `Array` | New input points, shape `(N_new, D)`. |
-
-**Returns:** `Array` of shape `(N_new,)`, `(N_new, K)`, or `(N_new, T, K)` matching the output layout used during `analyze_hdmr()`.
-
-### `HDMRResult`
-
-Dataclass holding HDMR sensitivity indices and emulator data.
-
-```python
-class HDMREmulator(TypedDict):
-    C1: Array
-    C2: Array | None
-    C3: Array | None
-    f0: Array
-    m: int
-    maxorder: int
-    c2: list[tuple[int, int]]
-    c3: list[tuple[int, int, int]]
-
-@dataclass
-class HDMRResult:
-    Sa: Array                          # structural (uncorrelated) contribution per term
-    Sb: Array                          # correlative contribution per term
-    S: Array                           # total contribution per term (Sa + Sb)
-    ST: Array                          # total-order per parameter
-    problem: Problem
-    terms: tuple[str, ...]             # ("x1", "x2", "x1/x2", ...) term labels
-    emulator: HDMREmulator | None = None  # fitted coefficients for prediction
-    select: Array | None = None        # F-test selection counts across outputs
-    rmse: Array | None = None          # emulator RMSE in output-layout shape
-```
-
-| Field / Property | Shape | Description |
-|---|---|---|
-| `Sa` | `(n_terms,)` / `(K, n_terms)` / `(T, K, n_terms)` | Structural (uncorrelated) contribution of each term. For first-order terms this is equivalent to Sobol S1. |
-| `Sb` | same as Sa | Correlative contribution of each term. Captures effects due to input correlations. |
-| `S` | same as Sa | Total sensitivity per term (`Sa + Sb`). |
-| `ST` | `(D,)` / `(K, D)` / `(T, K, D)` | Total contribution per parameter (sum of S over all terms involving that parameter). Matches classical Sobol ST in the independent-input setting; under correlated inputs it remains an ANCOVA-based total contribution. |
-| `S1` | same as ST | **Property.** First-order Sobol indices — extracts `Sa[:D]`. |
-| `terms` | `tuple[str, ...]` | Human-readable labels, e.g. `("x1", "x2", "x1/x2")`. |
-| `emulator` | `HDMREmulator \| None` | Fitted B-spline coefficients. For scalar output, `C1/C2/C3` keep shape `(basis, terms)`; for multi-output/time-series output, they gain leading `(K,)` or `(T, K)` axes. |
-| `select` | `(n_terms,)` or `None` | F-test selection counts summed across all output combinations. |
-| `rmse` | `Array \| None` | Emulator RMSE with shape `()`, `(K,)`, or `(T, K)` matching the analyzed output layout without the sample axis. |
-
-#### `to_dataset()` -- xarray conversion
-
-Same interface as `SAResult.to_dataset()`. Term-indexed variables (`Sa`, `Sb`, `S`) use `term` dimension with `self.terms` as coordinates. `ST` uses the `param` dimension.
-
-```python
-ds = hdmr.to_dataset()
-ds.Sa.sel(term="x1/x2")
-ds.ST.sel(param="x1")
-```
-
-`emulate_hdmr()` mirrors the analyzed output shape:
-
-| Y shape passed to `analyze_hdmr()` | `emulate_hdmr(..., X_new)` shape |
-|---|---|
-| `(N,)` | `(N_new,)` |
-| `(N, K)` | `(N_new, K)` |
-| `(N, T, K)` | `(N_new, T, K)` |
-
-**Number of terms by maxorder:**
-
-| maxorder | n_terms | Composition |
-|---|---|---|
-| 1 | D | D first-order terms |
-| 2 | D + C(D,2) | + pairwise interactions |
-| 3 | D + C(D,2) + C(D,3) | + triple interactions |
-
-**When to use HDMR vs Sobol:**
-- Use **Sobol** (`analyze`) when you can run the structured Saltelli sampling design and want exact variance decomposition.
-- Use **HDMR** (`analyze_hdmr`) when model evaluations are expensive and you want to reuse existing runs, when inputs may be correlated, or when you need a surrogate/emulator for prediction.
-
----
-
-## Understanding Output Shapes
-
-The shapes of all arrays in `SAResult` are determined by the shape of `Y` passed to `gsax.analyze()`. Let **D** = number of parameters, **K** = number of outputs, **T** = number of timesteps.
-
-### Shape mapping table
-
-| Y shape | S1 / ST shape | S2 shape | S1_conf / ST_conf shape | S2_conf shape |
-|---|---|---|---|---|
-| `(n_total,)` | `(D,)` | `(D, D)` | `(2, D)` | `(2, D, D)` |
-| `(n_total, K)` | `(K, D)` | `(K, D, D)` | `(2, K, D)` | `(2, K, D, D)` |
-| `(n_total, T, K)` | `(T, K, D)` | `(T, K, D, D)` | `(2, T, K, D)` | `(2, T, K, D, D)` |
-
-**Key observations:**
-- The parameter dimension **D** is always the last axis of S1 and ST.
-- S2 appends an extra **D** axis for the interaction pair, so it is always `(..., D, D)`.
-- Confidence interval arrays always prepend a leading dimension of **2**, where index `[0]` is the lower bound and index `[1]` is the upper bound.
-- S2 is `None` when `calc_second_order=False`. Similarly, all `*_conf` fields are `None` when `num_resamples=0`.
-
-### Example: reading results
-
-```python
-# Scalar output — Y.shape == (n_total,), D == 3
-result.S1[0]          # first-order index for parameter 0
-result.ST[2]          # total-order index for parameter 2
-result.S2[0, 1]       # second-order interaction between params 0 and 1
-
-# Multi-output — Y.shape == (n_total, K=4), D == 3
-result.S1[2, 0]       # first-order index for output 2, parameter 0
-result.S2[1, 0, 2]    # second-order interaction (params 0,2) for output 1
-
-# Time-series — Y.shape == (n_total, T=50, K=4), D == 3
-result.S1[10, 2, 0]   # S1 at timestep 10, output 2, parameter 0
-result.S2[10, 2, 0, 1]  # S2 interaction (params 0,1) at timestep 10, output 2
-```
-
----
-
-## SAResult Fields
-
-Detailed field-by-field documentation.
-
-### `S1` -- First-order Sobol indices
-
-The fraction of output variance attributable to each input parameter alone (excluding interactions). Values range from 0 to 1. A higher S1 means the parameter has a stronger direct (additive) effect.
-
-- **Shape:** `(D,)`, `(K, D)`, or `(T, K, D)` depending on Y.
-
-### `ST` -- Total-order Sobol indices
-
-The fraction of output variance attributable to each input parameter including all interactions with other parameters. Always `ST[i] >= S1[i]`. The gap `ST[i] - S1[i]` indicates how much of the parameter's influence comes through interactions.
-
-- **Shape:** same as S1.
-
-### `S2` -- Second-order interaction indices
-
-The fraction of output variance attributable to the interaction between each pair of parameters, beyond their individual first-order effects. The matrix is **symmetric** (`S2[..., i, j] == S2[..., j, i]`) and the **diagonal is NaN** (the interaction of a parameter with itself is undefined). Only the upper triangle is estimated directly; the lower triangle mirrors it.
-
-- **Shape:** `(D, D)`, `(K, D, D)`, or `(T, K, D, D)`.
-- **Value:** `None` if `calc_second_order=False` was used in `gsax.sample()`.
-
-### `S1_conf`, `ST_conf`, `S2_conf` -- Bootstrap confidence intervals
-
-Each confidence array has the same shape as the corresponding index array, but with an extra leading dimension of 2:
-- `[0, ...]` = lower bound of the confidence interval
-- `[1, ...]` = upper bound of the confidence interval
-
-For example, if `S1.shape == (K, D)`, then `S1_conf.shape == (2, K, D)`.
-
-- **Value:** `None` when `num_resamples=0` (no bootstrap requested).
-
-### `problem` -- Problem definition
-
-The `Problem` instance that was used, carried through for convenience.
-
-### `to_dataset()` -- xarray conversion
-
-Convert the result into a labeled `xarray.Dataset` with named dimensions (`param`, `output`, `time`).
-
-```python
-ds = result.to_dataset(time_coords=None)
-
-# Access by label
-ds.S1.sel(param="x1")
-ds.S1.sel(param="x1", output="temperature")
-
-# Variables: S1, ST, S2, S1_lower, S1_upper, ST_lower, ST_upper, S2_lower, S2_upper
-# Dimensions: param, output, time, param_i, param_j (S2 only)
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `time_coords` | `list \| np.ndarray \| None` | `None` | Coordinate values for the time dimension (3-D results). Defaults to integer indices. |
-
-Output names are taken from `problem.output_names` when set, otherwise auto-generated as `y0, y1, ...`. S2 uses `param_i` and `param_j` dimensions. Confidence intervals are split into `*_lower` and `*_upper` variables.
-
-### `nan_counts` -- Diagnostic NaN counts
-
-A dictionary reporting how many NaN values appear in each index array after computation. Useful for detecting edge cases such as constant outputs or degenerate sample groups.
-
-```python
-result.nan_counts
-# e.g. {"S1": 0, "ST": 0, "S2": 1}
-```
-
-- **Value:** `None` only in unusual circumstances; normally always populated.
-
----
-
-## Bootstrap Confidence Intervals
-
-To quantify uncertainty in the estimated indices, use bootstrap resampling:
-
-```python
-import jax
-
-result = gsax.analyze(
-    sampling_result,
-    Y,
-    num_resamples=200,           # number of bootstrap resamples (R)
-    conf_level=0.95,             # 95% confidence interval
-    key=jax.random.key(0),      # JAX PRNG key (required for bootstrap)
-)
-
-# Access confidence intervals
-lower_S1 = result.S1_conf[0]    # lower bound, same shape as result.S1
-upper_S1 = result.S1_conf[1]    # upper bound, same shape as result.S1
-
-lower_ST = result.ST_conf[0]
-upper_ST = result.ST_conf[1]
-
-# For S2 (if calc_second_order=True):
-lower_S2 = result.S2_conf[0]    # lower bound, same shape as result.S2
-upper_S2 = result.S2_conf[1]    # upper bound, same shape as result.S2
-```
-
-The bootstrap is fully vectorized in JAX, making it substantially faster than sequential resampling approaches on multi-output workloads. Run `benchmark_salib.py` on your hardware for current timings.
-
-**When to use bootstrap:** Bootstrap is recommended when you need to report uncertainty bounds or assess convergence. For exploratory analysis where you only need point estimates, set `num_resamples=0` (the default) to skip it entirely.
-
----
-
-## Data Cleaning
-
-`gsax.analyze()` automatically handles non-finite values (NaN, Inf, -Inf) in the model output `Y`:
-
-1. **Group-based removal:** Saltelli's method structures `Y` into groups of `step` rows (where `step = 2D + 2` or `D + 2`). If *any* element within a group is non-finite, the **entire group** is dropped. This preserves the mathematical structure required by the estimator.
-
-2. **Informational message:** When groups are dropped, gsax prints a message indicating how many groups were removed out of the total.
-
-3. **Error on total failure:** If *all* groups contain non-finite values, a `ValueError` is raised.
-
-4. **Post-analysis diagnostics:** The `nan_counts` field on `SAResult` reports how many NaN values remain in the computed indices. This can happen legitimately (e.g., S2 diagonal is always NaN, or a constant output produces undefined indices).
-
-```python
-# Example: model that occasionally returns NaN
-Y = my_flaky_model(sampling_result.samples)
-# Y may contain some NaN values
-
-result = gsax.analyze(sampling_result, Y)
-# gsax: dropped 3 of 1024 sample groups containing non-finite values
-
-# Check diagnostics
-print(result.nan_counts)  # {"S1": 0, "ST": 0, "S2": 3}  (3 = diagonal NaNs for D=3)
-```
+The full site reference now lives at
+[danielepessina.github.io/gsax/api/](https://danielepessina.github.io/gsax/api/).
+
+Use it for:
+
+- the complete exported surface from `gsax`
+- parameter, field, and shape contracts
+- validation and error behavior
+- `to_dataset()` labeling rules
+- Sobol and RS-HDMR workflow examples
+
+Quick map:
+
+- `Problem`
+- `sample` / `SamplingResult` / `load`
+- `analyze` / `SAResult`
+- `analyze_hdmr` / `emulate_hdmr` / `HDMRResult` / `HDMREmulator`
+
+For runnable walkthroughs, start with the
+[Getting Started guide](https://danielepessina.github.io/gsax/guide/getting-started)
+and the
+[examples section](https://danielepessina.github.io/gsax/examples/basic).
 
 ---
 

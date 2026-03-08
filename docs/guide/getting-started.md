@@ -55,9 +55,35 @@ problem = Problem.from_dict({
 })
 ```
 
+## Save and Reuse Samples
+
+`gsax.sample()` returns a `SamplingResult` that you can persist and reload
+later without losing the metadata needed by `gsax.analyze()`:
+
+```python
+sampling_result = gsax.sample(problem, n_samples=4096, seed=42)
+sampling_result.save("runs/experiment", format="csv")
+
+restored = gsax.load("runs/experiment", format="csv")
+Y = my_model(restored.samples)
+result = gsax.analyze(restored, Y)
+```
+
+This writes a sample file such as `runs/experiment.csv`, a metadata file
+`runs/experiment.json`, and an optional `runs/experiment.npz` sidecar when the
+expanded Saltelli layout cannot be reconstructed with an identity mapping alone.
+
 ## What's Next?
 
-- [Methods](/guide/methods) -- understand Sobol vs HDMR and when to use each
-- [xarray Output](/examples/xarray) -- labeled results with named dimensions
-- [Examples](/examples/basic) -- copy-pasteable code for common workflows
-- [API Reference](/api/problem) -- full parameter and return-type documentation
+Start with the core workflow, then branch into the example that matches your
+next problem:
+
+- [Methods](/guide/methods) -- compare Sobol sampling and RS-HDMR before choosing a workflow
+- [Basic Example (Ishigami)](/examples/basic) -- run the canonical scalar-output Sobol analysis end to end
+- [Save and Reload Samples](/examples/save-load) -- persist a `SamplingResult` and reuse it across runs
+- [Bootstrap CIs](/examples/bootstrap) -- quantify uncertainty with confidence intervals around `S1`, `ST`, and `S2`
+- [Multi-Output & Time-Series](/examples/multi-output) -- move from scalar outputs to `(N, K)` and `(N, T, K)` analyses
+- [xarray Output](/examples/xarray) -- export labeled datasets with named parameters, outputs, and time coordinates
+- [RS-HDMR](/examples/hdmr) -- switch to surrogate-based analysis when you already have arbitrary `(X, Y)` pairs
+- [Advanced Workflow](/examples/advanced-workflow) -- follow the full custom-model path with named outputs, Sobol, HDMR, emulation, and `to_dataset()`
+- [API Reference](/api/) -- browse the single-page reference for signatures, shape contracts, and result objects
