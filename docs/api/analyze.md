@@ -79,6 +79,22 @@ Same shape as the corresponding index array with a leading dimension of 2: `[0]`
 
 Dictionary reporting NaN counts in each index array. Useful for diagnosing constant outputs or degenerate groups.
 
+### `to_dataset(time_coords=None)`
+
+Convert to a labeled `xarray.Dataset`. See the [xarray example](/examples/xarray) for full usage.
+
+```python
+ds = result.to_dataset()
+ds.S1.sel(param="x1")
+ds.S1.sel(param="x1", output="temperature")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `time_coords` | `list \| np.ndarray \| None` | `None` | Coordinate values for the time dimension (3-D results only). Defaults to integer indices. |
+
+**Dimensions:** `param`, `output` (multi-output), `time` (3-D), `param_i`/`param_j` (S2). Output names come from `problem.output_names` or default to `y0, y1, ...`. Confidence intervals are split into `S1_lower`/`S1_upper`, `ST_lower`/`ST_upper`, `S2_lower`/`S2_upper`.
+
 ### Output Shape Reference
 
 | Y shape | S1 / ST | S2 | S1_conf / ST_conf | S2_conf |

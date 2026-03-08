@@ -9,6 +9,7 @@ Immutable dataclass defining the parameter space.
 class Problem:
     names: tuple[str, ...]
     bounds: tuple[tuple[float, float], ...]
+    output_names: tuple[str, ...] | None = None
 ```
 
 ## Fields
@@ -17,6 +18,7 @@ class Problem:
 |-------|------|-------------|
 | `names` | `tuple[str, ...]` | Parameter name for each of the D dimensions. |
 | `bounds` | `tuple[tuple[float, float], ...]` | Lower and upper bound for each parameter. Length must match `names`. |
+| `output_names` | `tuple[str, ...] \| None` | Optional labels for the output dimension. Used by `to_dataset()` as coordinate values. When `None`, outputs are labeled `y0, y1, ...`. |
 
 ## Properties
 
@@ -32,10 +34,14 @@ Construct a Problem from a dictionary.
 
 ```python
 @classmethod
-def from_dict(cls, params: dict[str, tuple[float, float]]) -> Problem
+def from_dict(
+    cls,
+    params: dict[str, tuple[float, float]],
+    output_names: tuple[str, ...] | None = None,
+) -> Problem
 ```
 
-Keys become `names`, values become `bounds`.
+Keys become `names`, values become `bounds`. Pass `output_names` to label outputs for `to_dataset()`.
 
 ## Examples
 
@@ -56,4 +62,10 @@ problem = Problem(
 )
 
 print(problem.num_vars)  # 3
+
+# With output names for xarray support
+problem = Problem.from_dict(
+    {"x1": (-3.14, 3.14), "x2": (-3.14, 3.14)},
+    output_names=("temperature", "pressure"),
+)
 ```

@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-pip install gsax
+pip install git+https://github.com/danielepessina/gsax.git
 ```
 
 For development:
@@ -58,5 +58,6 @@ problem = Problem.from_dict({
 ## What's Next?
 
 - [Methods](/guide/methods) -- understand Sobol vs HDMR and when to use each
+- [xarray Output](/examples/xarray) -- labeled results with named dimensions
 - [Examples](/examples/basic) -- copy-pasteable code for common workflows
 - [API Reference](/api/problem) -- full parameter and return-type documentation

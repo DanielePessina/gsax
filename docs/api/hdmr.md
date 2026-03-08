@@ -93,6 +93,22 @@ class HDMRResult:
 | `select` | `(n_terms,)` or `None` | F-test selection counts summed across analyzed output combinations. |
 | `rmse` | `Array \| None` | Emulator RMSE with shape `()`, `(K,)`, or `(T, K)` matching the analyzed output layout without the sample axis. |
 
+### `to_dataset(time_coords=None)`
+
+Convert to a labeled `xarray.Dataset`. See the [xarray example](/examples/xarray) for full usage.
+
+```python
+ds = hdmr.to_dataset()
+ds.Sa.sel(term="x1/x2")
+ds.ST.sel(param="x1")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `time_coords` | `list \| np.ndarray \| None` | `None` | Coordinate values for the time dimension (3-D results only). Defaults to integer indices. |
+
+**Dimensions:** `term` (Sa, Sb, S, select), `param` (ST), `output` (multi-output), `time` (3-D). Output names come from `problem.output_names` or default to `y0, y1, ...`.
+
 ### Emulator Output Shapes
 
 | Y shape passed to `analyze_hdmr()` | `emulate_hdmr(..., X_new)` shape |

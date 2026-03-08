@@ -18,6 +18,7 @@ export default defineConfig({
         items: [
           { text: 'Getting Started', link: '/getting-started' },
           { text: 'Methods', link: '/methods' },
+          { text: 'Benchmarks', link: '/benchmarks' },
         ],
       },
       '/examples/': {
@@ -27,6 +28,7 @@ export default defineConfig({
           { text: 'Multi-Output', link: '/multi-output' },
           { text: 'Bootstrap CIs', link: '/bootstrap' },
           { text: 'RS-HDMR', link: '/hdmr' },
+          { text: 'xarray Output', link: '/xarray' },
         ],
       },
       '/api/': {
