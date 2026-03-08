@@ -23,3 +23,5 @@ features:
   - title: Up to 929× Faster than SALib
     details: Fused JIT kernels and vectorized execution replace Python loops. 4.7× faster even on scalar outputs, up to 929× on multi-output workloads.
 ---
+
+`gsax`'s Sobol sampling and analysis workflow is heavily drawn from [SALib](https://salib.readthedocs.io/), adapted here into a JAX-first implementation focused on JIT compilation, accelerator execution, and multi-output workloads.

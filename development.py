@@ -1,7 +1,8 @@
 """Damped harmonic oscillator — gsax sensitivity analysis example.
 
 D = 5 parameters, T = 50 timepoints, K = 5 outputs.
-Demonstrates both Sobol (gsax.analyze) and RS-HDMR (gsax.analyze_hdmr).
+Demonstrates both Sobol (gsax.analyze) and RS-HDMR (gsax.analyze_hdmr),
+including xarray Dataset conversion via to_dataset().
 """
 
 import jax
@@ -21,7 +22,8 @@ problem = gsax.Problem.from_dict(
         "damping": (0.01, 0.5),
         "phase": (0.0, 2 * np.pi),
         "offset": (-1.0, 1.0),
-    }
+    },
+    output_names=("displacement", "velocity", "energy", "envelope", "modulated"),
 )
 
 T = 50
@@ -138,3 +140,42 @@ print(f"Prediction shape: {Y_pred.shape}")
 
 residual = jnp.abs(Y_hdmr[:5] - Y_pred)
 print(f"Max absolute error (first 5 samples): {residual.max():.6f}")
+
+# =============================================================================
+# 6. xarray Dataset conversion
+# =============================================================================
+
+print("\n=== xarray Datasets ===")
+
+# Convert Sobol result to labeled xarray Dataset
+time_values = np.asarray(t)  # use actual time coordinates
+ds_sobol = sobol.to_dataset(time_coords=time_values)
+print(f"\nSobol Dataset:\n{ds_sobol}")
+
+# Labeled access: S1 for "amplitude" parameter at all times and outputs
+print("\nS1 for 'amplitude' (all times, all outputs):")
+print(ds_sobol.S1.sel(param="amplitude"))
+
+# S1 for a specific output at a specific time
+print("\nS1 for 'displacement' output at time 0:")
+print(ds_sobol.S1.sel(output="displacement", time=time_values[0]))
+
+# S2 interaction matrix uses param_i / param_j dimensions
+print("\nS2 dims:", ds_sobol.S2.dims)
+print("S2 amplitude x frequency (first time, first output):")
+print(
+    ds_sobol.S2.sel(
+        param_i="amplitude", param_j="frequency", time=time_values[0], output="displacement"
+    ).values
+)
+
+# Convert HDMR result to labeled xarray Dataset
+ds_hdmr = hdmr.to_dataset(time_coords=time_values)
+print(f"\nHDMR Dataset:\n{ds_hdmr}")
+
+# Term-indexed access
+print("\nST for 'amplitude' parameter:")
+print(ds_hdmr.ST.sel(param="amplitude"))
+
+print("\nSa for 'amplitude/frequency' interaction term:")
+print(ds_hdmr.Sa.sel(term="amplitude/frequency"))

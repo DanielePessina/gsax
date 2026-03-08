@@ -20,6 +20,7 @@
 - Supports scalar, multi-output, and time-series model outputs from the start
 - Bootstrap confidence intervals with JAX-accelerated resampling
 - Automatic data cleaning: non-finite values (NaN/Inf) are detected and dropped by group
+- **xarray integration** — `to_dataset()` on results for labeled, named dimensions (`param`, `output`, `time`)
 - Built-in Ishigami benchmark function with known analytical solutions
 
 ## Installation
@@ -238,13 +239,15 @@ Immutable dataclass defining the parameter space.
 class Problem:
     names: tuple[str, ...]                    # parameter names
     bounds: tuple[tuple[float, float], ...]   # (low, high) for each parameter
+    output_names: tuple[str, ...] | None = None  # optional output labels for xarray
 ```
 
 | Attribute / Method | Type | Description |
 |---|---|---|
 | `names` | `tuple[str, ...]` | Parameter name for each of the D dimensions. |
 | `bounds` | `tuple[tuple[float, float], ...]` | Lower and upper bound for each parameter. Length must match `names`. |
-| `from_dict(params)` | classmethod | Construct from `dict[str, tuple[float, float]]`. Keys become `names`, values become `bounds`. |
+| `output_names` | `tuple[str, ...] \| None` | Optional labels for the output dimension. Used by `to_dataset()` as coordinate values. Defaults to `y0, y1, ...` if not set. |
+| `from_dict(params, output_names=None)` | classmethod | Construct from `dict[str, tuple[float, float]]`. Keys become `names`, values become `bounds`. |
 | `num_vars` | `int` (property) | D -- the number of parameters. Equivalent to `len(names)`. |
 
 ### `gsax.sample()`
@@ -436,6 +439,16 @@ class HDMRResult:
 | `select` | `(n_terms,)` or `None` | F-test selection counts summed across all output combinations. |
 | `rmse` | `Array \| None` | Emulator RMSE with shape `()`, `(K,)`, or `(T, K)` matching the analyzed output layout without the sample axis. |
 
+#### `to_dataset()` -- xarray conversion
+
+Same interface as `SAResult.to_dataset()`. Term-indexed variables (`Sa`, `Sb`, `S`) use `term` dimension with `self.terms` as coordinates. `ST` uses the `param` dimension.
+
+```python
+ds = hdmr.to_dataset()
+ds.Sa.sel(term="x1/x2")
+ds.ST.sel(param="x1")
+```
+
 `emulate_hdmr()` mirrors the analyzed output shape:
 
 | Y shape passed to `analyze_hdmr()` | `emulate_hdmr(..., X_new)` shape |
@@ -532,6 +545,27 @@ For example, if `S1.shape == (K, D)`, then `S1_conf.shape == (2, K, D)`.
 
 The `Problem` instance that was used, carried through for convenience.
 
+### `to_dataset()` -- xarray conversion
+
+Convert the result into a labeled `xarray.Dataset` with named dimensions (`param`, `output`, `time`).
+
+```python
+ds = result.to_dataset(time_coords=None)
+
+# Access by label
+ds.S1.sel(param="x1")
+ds.S1.sel(param="x1", output="temperature")
+
+# Variables: S1, ST, S2, S1_lower, S1_upper, ST_lower, ST_upper, S2_lower, S2_upper
+# Dimensions: param, output, time, param_i, param_j (S2 only)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `time_coords` | `list \| np.ndarray \| None` | `None` | Coordinate values for the time dimension (3-D results). Defaults to integer indices. |
+
+Output names are taken from `problem.output_names` when set, otherwise auto-generated as `y0, y1, ...`. S2 uses `param_i` and `param_j` dimensions. Confidence intervals are split into `*_lower` and `*_upper` variables.
+
 ### `nan_counts` -- Diagnostic NaN counts
 
 A dictionary reporting how many NaN values appear in each index array after computation. Useful for detecting edge cases such as constant outputs or degenerate sample groups.
@@ -609,6 +643,7 @@ print(result.nan_counts)  # {"S1": 0, "ST": 0, "S2": 3}  (3 = diagonal NaNs for 
 - `jax >= 0.4`
 - `jaxlib >= 0.4`
 - `scipy >= 1.10`
+- `xarray`
 
 ## License
 
