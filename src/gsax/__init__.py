@@ -3,7 +3,7 @@ from gsax.analyze_hdmr import analyze_hdmr, emulate_hdmr
 from gsax.problem import Problem
 from gsax.results import SAResult
 from gsax.results_hdmr import HDMREmulator, HDMRResult
-from gsax.sampling import SamplingResult, sample
+from gsax.sampling import SamplingResult, load, sample
 
 __all__ = [
     "HDMREmulator",
@@ -14,5 +14,6 @@ __all__ = [
     "analyze",
     "analyze_hdmr",
     "emulate_hdmr",
+    "load",
     "sample",
 ]

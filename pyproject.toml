@@ -1,6 +1,6 @@
 [project]
 name = "gsax"
-version = "0.3.0"
+version = "0.4.0"
 description = "Global Sensitivity Analysis in JAX"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,6 +14,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.4", "SALib>=1.4"]
+xlsx = ["openpyxl>=3.1"]
+parquet = ["pyarrow>=14"]
+all = ["openpyxl>=3.1", "pyarrow>=14"]
 
 [build-system]
 requires = ["hatchling"]
