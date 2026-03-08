@@ -21,6 +21,7 @@
 - Bootstrap confidence intervals with JAX-accelerated resampling
 - Automatic data cleaning: non-finite values (NaN/Inf) are detected and dropped by group
 - **xarray integration** — `to_dataset()` on results for labeled, named dimensions (`param`, `output`, `time`)
+- Save and reload Sobol sample sets with metadata via `SamplingResult.save()` and `gsax.load()`
 - Built-in Ishigami benchmark function with known analytical solutions
 
 ## Installation
@@ -146,6 +147,29 @@ sampling_result = gsax.sample(
 # sampling_result.samples_df is a pandas DataFrame with SampleID + parameter columns
 # sampling_result.expanded_n_total is the internal Saltelli row count
 ```
+
+### Save and reload samples
+
+If you want to generate samples once and reuse them later, persist the
+`SamplingResult` to disk and reconstruct it with `gsax.load()`:
+
+```python
+sampling_result.save("runs/ishigami_samples", format="csv")
+
+restored = gsax.load("runs/ishigami_samples", format="csv")
+Y = my_model(restored.samples)
+result = gsax.analyze(restored, Y)
+```
+
+`path` is a file stem, not a full filename. The call above writes:
+
+- `runs/ishigami_samples.csv` with the unique sample matrix
+- `runs/ishigami_samples.json` with problem and Saltelli metadata
+- `runs/ishigami_samples.npz` only when the internal expanded-to-unique mapping is non-trivial
+
+Supported formats are `csv`, `txt`, `xlsx`, `parquet`, and `pkl`. Use the
+same `format` value when calling `gsax.load()`. `xlsx` requires `openpyxl`,
+and `parquet` requires `pyarrow`.
 
 ### Analyze results
 
@@ -306,6 +330,20 @@ class SamplingResult:
 | `problem` | `Problem` | | The Problem instance used during sampling. |
 | `samples_df` | `pd.DataFrame` (property) | `(n_total, D + 1)` | Tabular view of the unique samples with `SampleID` followed by parameter columns. |
 | `n_total` | `int` (property) | `samples.shape[0]` | Total number of unique rows in `samples`. |
+| `save(path, format="csv")` | method | | Persist the unique samples plus reconstruction metadata to disk. `path` is a file stem; `format` must be one of `csv`, `txt`, `xlsx`, `parquet`, or `pkl`. |
+
+### `gsax.load()`
+
+Reconstruct a previously saved `SamplingResult`.
+
+```python
+sampling_result = gsax.load("runs/ishigami_samples", format="csv")
+```
+
+Use the same file stem and sample `format` that were passed to
+`SamplingResult.save()`. The sample file stores only the unique rows; the
+JSON metadata and optional `.npz` sidecar restore the original Saltelli
+reconstruction mapping used by `gsax.analyze()`.
 
 ### `gsax.analyze()`
 

@@ -25,6 +25,7 @@ export default defineConfig({
         base: '/examples/',
         items: [
           { text: 'Basic (Ishigami)', link: '/basic' },
+          { text: 'Save & Reload', link: '/save-load' },
           { text: 'Multi-Output', link: '/multi-output' },
           { text: 'Bootstrap CIs', link: '/bootstrap' },
           { text: 'RS-HDMR', link: '/hdmr' },

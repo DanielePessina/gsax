@@ -55,9 +55,28 @@ problem = Problem.from_dict({
 })
 ```
 
+## Save and Reuse Samples
+
+`gsax.sample()` returns a `SamplingResult` that you can persist and reload
+later without losing the metadata needed by `gsax.analyze()`:
+
+```python
+sampling_result = gsax.sample(problem, n_samples=4096, seed=42)
+sampling_result.save("runs/experiment", format="csv")
+
+restored = gsax.load("runs/experiment", format="csv")
+Y = my_model(restored.samples)
+result = gsax.analyze(restored, Y)
+```
+
+This writes a sample file such as `runs/experiment.csv`, a metadata file
+`runs/experiment.json`, and an optional `runs/experiment.npz` sidecar when the
+expanded Saltelli layout cannot be reconstructed with an identity mapping alone.
+
 ## What's Next?
 
 - [Methods](/guide/methods) -- understand Sobol vs HDMR and when to use each
+- [Save and Reload Samples](/examples/save-load) -- persist `SamplingResult` for later runs
 - [xarray Output](/examples/xarray) -- labeled results with named dimensions
 - [Examples](/examples/basic) -- copy-pasteable code for common workflows
 - [API Reference](/api/problem) -- full parameter and return-type documentation

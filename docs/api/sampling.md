@@ -67,3 +67,54 @@ class SamplingResult:
 |----------|------|-------------|
 | `n_total` | `int` | Number of unique rows: `samples.shape[0]`. |
 | `samples_df` | `pd.DataFrame` | Tabular view with `SampleID` followed by parameter columns. |
+
+### Methods
+
+#### `save(path, format="csv")`
+
+Serialize the unique samples and the metadata needed to reconstruct the
+internal Saltelli expansion.
+
+```python
+sampling_result.save("runs/experiment", format="csv")
+```
+
+**Parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path` | `str \| Path` | required | File stem with no extension, for example `"runs/experiment"`. |
+| `format` | `str` | `"csv"` | Sample file format. Must be one of `csv`, `txt`, `xlsx`, `parquet`, or `pkl`. |
+
+This writes:
+
+- `path.<format>` containing the unique sample matrix with one column per parameter
+- `path.json` containing the `Problem`, `base_n`, `expanded_n_total`, and related metadata
+- `path.npz` only when `expanded_to_unique` is not the identity mapping
+
+`xlsx` requires `openpyxl`. `parquet` requires `pyarrow`.
+
+---
+
+## `gsax.load()`
+
+Load a previously saved [`SamplingResult`](#samplingresult).
+
+```python
+def load(path: str | Path, *, format: str = "csv") -> SamplingResult
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path` | `str \| Path` | required | File stem previously passed to `SamplingResult.save()`. |
+| `format` | `str` | `"csv"` | Sample file format. Must match the format used when saving. |
+
+**Returns:** [`SamplingResult`](#samplingresult)
+
+### Notes
+
+- `gsax.load()` reconstructs the original `Problem`, `base_n`, and `expanded_to_unique` mapping so the returned object can be passed directly into `gsax.analyze()`.
+- Format is not auto-detected from metadata; pass the same `format` value you saved with.
+- If the metadata file is missing, `load()` raises `FileNotFoundError`.
