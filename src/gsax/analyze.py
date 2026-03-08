@@ -288,9 +288,10 @@ def _squeeze_results(
             S2 = S2[0, 0]
         if S1_conf is not None:
             S1_conf = S1_conf[:, 0, 0]
+        if ST_conf is not None:
             ST_conf = ST_conf[:, 0, 0]
-            if S2_conf is not None:
-                S2_conf = S2_conf[:, 0, 0]
+        if S2_conf is not None:
+            S2_conf = S2_conf[:, 0, 0]
     elif squeeze_time:
         S1 = S1[0]
         ST = ST[0]
@@ -298,9 +299,10 @@ def _squeeze_results(
             S2 = S2[0]
         if S1_conf is not None:
             S1_conf = S1_conf[:, 0]
+        if ST_conf is not None:
             ST_conf = ST_conf[:, 0]
-            if S2_conf is not None:
-                S2_conf = S2_conf[:, 0]
+        if S2_conf is not None:
+            S2_conf = S2_conf[:, 0]
     return S1, ST, S2, S1_conf, ST_conf, S2_conf
 
 
@@ -439,7 +441,8 @@ def _analyze_bootstrap(
     percentiles = jnp.array([alpha * 100, (1.0 - alpha) * 100])
 
     jit_ft = _get_bootstrap_point_kernel(False)
-    jit_so = _get_bootstrap_point_kernel(True) if calc_second_order else None
+    if calc_second_order:
+        jit_so = _get_bootstrap_point_kernel(True)
 
     S1_list, ST_list = [], []
     S1_lo_list, S1_hi_list = [], []
@@ -586,7 +589,11 @@ def analyze(
 
         total_groups = Y.shape[0] // step + n_dropped
         warnings.warn(
-            f"gsax: dropped {n_dropped} of {total_groups} sample groups containing non-finite values"
+            (
+                "gsax: dropped "
+                f"{n_dropped} of {total_groups} sample groups "
+                "containing non-finite values"
+            )
         )
         if Y.shape[0] == 0:
             raise ValueError("All samples contain non-finite values")

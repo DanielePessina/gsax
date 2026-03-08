@@ -17,3 +17,9 @@ Run type checking with ty on all new code. run via uv run ty only on the edited 
 • Follow SOLID design priciniples where possible
 • we do not care about test coverage too much, functionality is most important.
 • if writing unit tests, always use pytest , run via uv run pytest
+
+## Session Corrections
+
+• If the user says to use an open `tmux` session, inject commands into that live session or pane directly rather than creating a detached window or separate exec session.
+• `ty` must be invoked with a subcommand. Use `uv run ty check <path>` for package or file typechecking, not `uv run ty <path>`.
+• If the user says to “ignore” a typing issue in this context, confirm whether they mean “leave it unresolved” or “fix it by adding the proper guard/assertion.” Do not assume they want the diagnostic left in place.
