@@ -4,6 +4,9 @@ export default defineConfig({
   title: 'gsax',
   description: 'Global Sensitivity Analysis in JAX',
   base: '/gsax/',
+  markdown: {
+    math: true,
+  },
 
   themeConfig: {
     nav: [
