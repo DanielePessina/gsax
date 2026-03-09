@@ -19,6 +19,8 @@
   - S1/ST properties for direct comparison with Sobol results
 - Supports scalar, multi-output, and time-series model outputs from the start
 - Bootstrap confidence intervals with JAX-accelerated resampling
+- Optional `prenormalize=True` mode for SALib-style output standardization before
+  Sobol or HDMR analysis
 - Automatic data cleaning: non-finite values (NaN/Inf) are detected and dropped by group
 - **xarray integration** — `to_dataset()` on results for labeled, named dimensions (`param`, `output`, `time`)
 - Save and reload Sobol sample sets with metadata via `SamplingResult.save()` and `gsax.load()`
@@ -54,7 +56,11 @@ sampling_result = gsax.sample(PROBLEM, n_samples=4096, seed=42)
 Y = evaluate(sampling_result.samples)  # Y.shape == (n_total,)
 
 # 3. Compute Sobol indices
-result = gsax.analyze(sampling_result, Y)
+result = gsax.analyze(
+    sampling_result,
+    Y,
+    prenormalize=False,  # default; set True for SALib-style output standardization
+)
 # result.S1.shape == (D,)    — first-order indices
 # result.ST.shape == (D,)    — total-order indices
 # result.S2.shape == (D, D)  — second-order interaction matrix
@@ -92,6 +98,7 @@ Y = evaluate(X)  # Y.shape == (2000,)
 result = gsax.analyze_hdmr(
     PROBLEM, X, Y,
     maxorder=2,
+    prenormalize=False,  # default; set True for SALib-style output standardization
     chunk_size=64,  # optional: limit T*K vmap batch size for memory control
 )
 
@@ -106,6 +113,7 @@ print("Terms:", result.terms)  # ('x1', 'x2', 'x3', 'x1/x2', 'x1/x3', 'x2/x3')
 
 # 4. Use the fitted surrogate as an emulator
 Y_pred = gsax.emulate_hdmr(result, X)
+# Y_pred stays on the original output scale even when prenormalize=True
 ```
 
 ## Usage
@@ -187,12 +195,22 @@ Y = my_model(sampling_result.samples)
 result = gsax.analyze(
     sampling_result,
     Y,
+    prenormalize=False,  # optional SALib-style output standardization
+    # ci_method="quantile",  # optional bootstrap CI summary method
     chunk_size=64,  # optional: limit vmap batch size for memory control
 )
 
 # result.S1, result.ST — sensitivity indices
 # result.S2            — second-order interactions (None if not computed)
 ```
+
+Set `prenormalize=True` when you want global output standardization over the
+sample axis before analysis. The default `False` preserves the current gsax
+behavior. When bootstrapping with `num_resamples > 0`, use
+`ci_method="quantile"` for percentile bootstrap lower/upper endpoints or
+`ci_method="gaussian"` for symmetric gaussian lower/upper endpoints computed
+from the bootstrap standard deviation. Both options still return endpoint
+arrays, not SALib-style confidence half-widths, even when `prenormalize=True`.
 
 ### Multi-output models
 

@@ -47,9 +47,10 @@ class SAResult:
         }
         if self.S1_conf is not None:
             shapes["S1_conf"] = self.S1_conf.shape
+        if self.ST_conf is not None:
             shapes["ST_conf"] = self.ST_conf.shape
-            if self.S2_conf is not None:
-                shapes["S2_conf"] = self.S2_conf.shape
+        if self.S2_conf is not None:
+            shapes["S2_conf"] = self.S2_conf.shape
         return f"SAResult({shapes})"
 
     def to_dataset(

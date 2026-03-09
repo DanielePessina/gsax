@@ -244,8 +244,10 @@ def analyze(
     sampling_result: SamplingResult,
     Y: Array,
     *,
+    prenormalize: bool = False,
     num_resamples: int = 0,
     conf_level: float = 0.95,
+    ci_method: Literal["quantile", "gaussian"] = "quantile",
     key: Array | None = None,
     chunk_size: int = 2048,
 ) -> SAResult
@@ -255,8 +257,10 @@ def analyze(
 | --- | --- | --- | --- |
 | `sampling_result` | `SamplingResult` | required | Result from `sample()`. |
 | `Y` | `Array` | required | Model outputs on the unique rows in `sampling_result.samples`. |
+| `prenormalize` | `bool` | `False` | Apply SALib-style output standardization over the sample axis before analysis. |
 | `num_resamples` | `int` | `0` | Number of bootstrap resamples. |
 | `conf_level` | `float` | `0.95` | Confidence level for bootstrap intervals. |
+| `ci_method` | `Literal["quantile", "gaussian"]` | `"quantile"` | Bootstrap CI summary method. `quantile` returns percentile endpoints; `gaussian` returns symmetric gaussian endpoints from bootstrap standard deviation. |
 | `key` | `Array \| None` | `None` | Required JAX PRNG key when `num_resamples > 0`. |
 | `chunk_size` | `int` | `2048` | `(T, K)` output combinations per batch on the no-bootstrap path. |
 
@@ -270,11 +274,20 @@ Validation and behavior:
 
 - A 2D array is always interpreted as `(N, K)`, never `(N, T)`.
 - For a time-series with one output, reshape to `(N, T, 1)`.
+- When `prenormalize=True`, `Y` is centered and scaled once per output slice
+  over the sample axis after Saltelli reconstruction and non-finite-group
+  cleanup.
+- `ci_method` accepts `"quantile"` and `"gaussian"`. The option is ignored
+  when `num_resamples == 0` because no CI arrays are produced.
 - If `num_resamples > 0`, `key` is required or `ValueError` is raised.
 - Sample groups containing any non-finite values are dropped before analysis.
 - If every group is invalid, `ValueError("All samples contain non-finite values")`
   is raised.
 - Zero-variance slices emit warnings because Sobol indices become undefined.
+- Bootstrap intervals always remain lower/upper endpoint arrays, not SALib-style
+  half-widths. `ci_method="quantile"` uses percentile endpoints, while
+  `ci_method="gaussian"` uses symmetric gaussian endpoints from bootstrap
+  standard deviation.
 
 Returns: [`SAResult`](#saresult)
 
@@ -350,6 +363,7 @@ Y = evaluate(sampling_result.samples)
 result = gsax.analyze(
     sampling_result,
     Y,
+    prenormalize=True,
     num_resamples=200,
     key=jax.random.key(0),
 )
@@ -379,6 +393,7 @@ def analyze_hdmr(
     X: Array,
     Y: Array,
     *,
+    prenormalize: bool = False,
     maxorder: int = 2,
     maxiter: int = 100,
     m: int = 2,
@@ -392,6 +407,7 @@ def analyze_hdmr(
 | `problem` | `Problem` | required | Bounds and names used to normalize `X`. |
 | `X` | `Array` | required | Input array with shape `(N, D)`. |
 | `Y` | `Array` | required | Output array with shape `(N,)`, `(N, K)`, or `(N, T, K)`. |
+| `prenormalize` | `bool` | `False` | Apply SALib-style output standardization over the sample axis before fitting. |
 | `maxorder` | `int` | `2` | Maximum HDMR expansion order. |
 | `maxiter` | `int` | `100` | Maximum backfitting iterations. |
 | `m` | `int` | `2` | Number of B-spline intervals. |
@@ -406,6 +422,8 @@ Validation and behavior:
 - When `D == 2`, `maxorder` cannot exceed 2.
 - `chunk_size` must be at least 1.
 - A 2D output array is always treated as `(N, K)`.
+- When `prenormalize=True`, `Y` is centered and scaled once per output slice
+  over the sample axis before surrogate fitting.
 
 Returns: [`HDMRResult`](#hdmrresult)
 
@@ -428,6 +446,8 @@ Validation and behavior:
 - Raises `ValueError` when `result.emulator is None`.
 - Returns `(N_new,)`, `(N_new, K)`, or `(N_new, T, K)` to match the fitted
   output layout.
+- When the result was fit with `prenormalize=True`, predictions are mapped back
+  to the original output scale before being returned.
 - Not JIT-compatible because `HDMRResult` is not a JAX pytree.
 
 <a id="hdmrresult"></a>
@@ -500,6 +520,9 @@ class HDMREmulator(TypedDict):
     C2: Array | None
     C3: Array | None
     f0: Array
+    prenormalize: bool
+    y_mean: Array
+    y_std: Array
     m: int
     maxorder: int
     c2: list[tuple[int, int]]
@@ -510,6 +533,8 @@ class HDMREmulator(TypedDict):
 | --- | --- |
 | `C1`, `C2`, `C3` | Fitted B-spline coefficients for first-, second-, and third-order terms. |
 | `f0` | Intercept term in the emulator. |
+| `prenormalize` | Whether the HDMR fit standardized outputs before fitting. |
+| `y_mean`, `y_std` | Per-output-slice statistics used to map prenormalized predictions back to the original scale. |
 | `m` | Number of spline intervals used during fitting. |
 | `maxorder` | Expansion order used to build the surrogate. |
 | `c2`, `c3` | Term-index mappings for pairwise and triple interaction terms. |

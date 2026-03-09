@@ -20,6 +20,7 @@ from gsax._hdmr import (
     _compute_f_crits,
     _make_hdmr_kernel,
 )
+from gsax._normalization import _prenormalize_outputs
 from gsax.problem import Problem
 from gsax.results_hdmr import HDMREmulator, HDMRResult
 
@@ -176,6 +177,7 @@ def analyze_hdmr(
     X: Array,
     Y: Array,
     *,
+    prenormalize: bool = False,
     maxorder: int = 2,
     maxiter: int = 100,
     m: int = 2,
@@ -195,6 +197,11 @@ def analyze_hdmr(
         Y: (N,), (N, K), or (N, T, K) model outputs. A 2D array is always
             interpreted as (N, K); for time-series with a single output,
             reshape to (N, T, 1).
+        prenormalize: When ``True``, standardize each output slice over the
+            sample axis before fitting the surrogate by subtracting its mean
+            and dividing by its standard deviation once globally. The fitted
+            emulator is still returned on the original output scale. Defaults
+            to ``False``.
         maxorder: Maximum HDMR expansion order (1, 2, or 3).
         maxiter: Maximum backfitting iterations for first-order terms.
         m: Number of B-spline intervals (basis size = m + 3 per dimension).
@@ -246,6 +253,11 @@ def analyze_hdmr(
     # Promote Y to 3D
     Y_3d, squeeze_time, squeeze_output = _prepare_Y(Y)
     _, T, K_out = Y_3d.shape
+    if prenormalize:
+        Y_3d, y_mean, y_std, _ = _prenormalize_outputs(Y_3d)
+    else:
+        y_mean = jnp.zeros(Y_3d.shape[1:], dtype=Y_3d.dtype)
+        y_std = jnp.ones(Y_3d.shape[1:], dtype=Y_3d.dtype)
 
     Y_flat = Y_3d.transpose(1, 2, 0).reshape(T * K_out, N)
     total = T * K_out
@@ -332,6 +344,22 @@ def analyze_hdmr(
         squeeze_time,
         squeeze_output,
     )
+    y_mean_out = _reshape_emulator_value(
+        y_mean.reshape(T * K_out, 1),
+        T,
+        K_out,
+        squeeze_time,
+        squeeze_output,
+    )
+    y_mean_out = jnp.squeeze(y_mean_out, axis=-1)
+    y_std_out = _reshape_emulator_value(
+        y_std.reshape(T * K_out, 1),
+        T,
+        K_out,
+        squeeze_time,
+        squeeze_output,
+    )
+    y_std_out = jnp.squeeze(y_std_out, axis=-1)
 
     # Build emulator dict
     emulator: HDMREmulator = {
@@ -339,6 +367,9 @@ def analyze_hdmr(
         "C2": C2_out,
         "C3": C3_out,
         "f0": f0_out,
+        "prenormalize": prenormalize,
+        "y_mean": y_mean_out,
+        "y_std": y_std_out,
         "m": m,
         "maxorder": maxorder,
         "c2": list(c2),
@@ -355,12 +386,9 @@ def analyze_hdmr(
         emulator=emulator,
         select=select_sum,
         rmse=_reshape_emulator_value(
-            jnp.concatenate(rmse_parts),
-            T,
-            K_out,
-            squeeze_time,
-            squeeze_output,
-        ),
+            jnp.concatenate(rmse_parts), T, K_out, squeeze_time, squeeze_output
+        )
+        * y_std_out,
     )
 
 
@@ -389,6 +417,9 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
 
     Returns:
         Y_pred: (N_new,), (N_new, K), or (N_new, T, K) predicted outputs.
+            When the emulator was fit with ``prenormalize=True``, predictions
+            are inverse-transformed back to the original output scale before
+            being returned.
     """
     em = result.emulator
     if em is None:
@@ -398,6 +429,9 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
     maxorder = em["maxorder"]
     C1 = em["C1"]
     f0 = em["f0"]
+    prenormalize = em["prenormalize"]
+    y_mean = em["y_mean"]
+    y_std = em["y_std"]
 
     # Normalize
     X_n = _normalize_X(X_new, result.problem)
@@ -432,4 +466,7 @@ def emulate_hdmr(result: HDMRResult, X_new: Array) -> Array:
         )
         Y_total = Y_total + _emulator_contract(B3, em["C3"])
 
-    return Y_total + f0
+    Y_pred = Y_total + f0
+    if prenormalize:
+        Y_pred = Y_pred * y_std + y_mean
+    return Y_pred

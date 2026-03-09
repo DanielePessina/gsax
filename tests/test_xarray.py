@@ -1,9 +1,11 @@
 """Tests for xarray Dataset conversion of SAResult and HDMRResult."""
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import gsax
 from gsax.problem import Problem
 from gsax.results import SAResult
 from gsax.results_hdmr import HDMRResult
@@ -145,6 +147,66 @@ class TestSAResultToDataset:
         )
         with pytest.raises(ValueError, match="output_names length"):
             r.to_dataset()
+
+    @pytest.mark.parametrize("ci_method", ["quantile", "gaussian"])
+    def test_analyze_bootstrap_export_preserves_lower_upper_variables(self, ci_method):
+        """Real bootstrap analyze() output exports lower/upper CI variables."""
+        problem = Problem.from_dict(
+            {"x1": (0.0, 1.0), "x2": (0.0, 1.0), "x3": (0.0, 1.0)},
+            output_names=("response",),
+        )
+        sampling_result = gsax.sample(
+            problem,
+            n_samples=256,
+            calc_second_order=True,
+            seed=7,
+            verbose=False,
+        )
+        X = jnp.asarray(sampling_result.samples)
+        Y = 2.0 * X[:, 0] + 0.5 * X[:, 1] ** 2 + X[:, 0] * X[:, 2]
+
+        result = gsax.analyze(
+            sampling_result,
+            Y,
+            num_resamples=20,
+            conf_level=0.9,
+            ci_method=ci_method,
+            key=jax.random.key(123),
+        )
+        assert result.S1_conf is not None
+        assert result.ST_conf is not None
+        assert result.S2_conf is not None
+        ds = result.to_dataset()
+
+        assert "S1_lower" in ds
+        assert "S1_upper" in ds
+        assert "ST_lower" in ds
+        assert "ST_upper" in ds
+        assert "S2_lower" in ds
+        assert "S2_upper" in ds
+
+        assert list(ds.S1_lower.dims) == ["param"]
+        assert list(ds.ST_upper.dims) == ["param"]
+        assert list(ds.S2_lower.dims) == ["param_i", "param_j"]
+
+        np.testing.assert_allclose(ds.S1.values, np.asarray(result.S1))
+        np.testing.assert_allclose(ds.S1_lower.values, np.asarray(result.S1_conf[0]))
+        np.testing.assert_allclose(ds.S1_upper.values, np.asarray(result.S1_conf[1]))
+        np.testing.assert_allclose(ds.ST_lower.values, np.asarray(result.ST_conf[0]))
+        np.testing.assert_allclose(ds.ST_upper.values, np.asarray(result.ST_conf[1]))
+        np.testing.assert_allclose(
+            ds.S2_lower.values,
+            np.asarray(result.S2_conf[0]),
+            equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            ds.S2_upper.values,
+            np.asarray(result.S2_conf[1]),
+            equal_nan=True,
+        )
+        assert list(ds.coords["param"].values) == ["x1", "x2", "x3"]
+        assert list(ds.coords["param_i"].values) == ["x1", "x2", "x3"]
+        assert list(ds.coords["param_j"].values) == ["x1", "x2", "x3"]
 
 
 # ── HDMRResult tests ────────────────────────────────────────────────────────
