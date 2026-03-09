@@ -20,6 +20,7 @@ result = gsax.analyze_hdmr(
     PROBLEM,
     X,
     Y,
+    prenormalize=True,
     maxorder=2,
     chunk_size=256,
 )
@@ -40,6 +41,10 @@ print("Prediction shape:", Y_pred.shape)
 print("Absolute residuals:", jnp.abs(Y[:5] - Y_pred))
 ```
 
+`prenormalize=True` applies SALib-style output standardization once over the
+sample axis before fitting the surrogate. The stored emulator still returns
+predictions on the original output scale.
+
 ## What to look at
 
 - `result.S1` is the structural first-order contribution extracted from
@@ -56,6 +61,8 @@ print("Absolute residuals:", jnp.abs(Y[:5] - Y_pred))
 - `analyze_hdmr()` accepts `(N,)`, `(N, K)`, and `(N, T, K)` outputs, so the
   same shape rules from [Multi-Output & Time-Series](/examples/multi-output)
   still apply.
+- Leave `prenormalize=False` to preserve the current gsax behavior. Enable it
+  when you want SALib-style output standardization before fitting.
 - HDMR does not use a structured Saltelli design; if you want exact Sobol
   estimators on independent inputs, start from [Basic Example](/examples/basic)
   instead.
