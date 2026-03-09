@@ -88,6 +88,12 @@ $$
 2. You evaluate your model on `sampling_result.samples`.
 3. `gsax.analyze()` reconstructs the Saltelli layout internally and computes all indices in a single `jit(vmap(...))` pass.
 
+Optional: `gsax.analyze(..., prenormalize=True)` applies SALib-style output
+standardization once per output slice over the sample axis before computing the
+Sobol estimators. This changes the point-estimate path to align more closely
+with SALib, but `gsax` still reports percentile bootstrap lower/upper bounds
+rather than SALib's symmetric confidence widths.
+
 ### Index summary
 
 | Index | Meaning |
@@ -124,8 +130,15 @@ This distinction is important in practice because many real-world models have co
 ### How to use it
 
 1. You provide any set of $(X, Y)$ pairs — no structured sampling design required.
-2. `gsax.analyze_hdmr()` normalises inputs to $[0, 1]$, builds B-spline basis matrices, and fits component functions via backfitting with Tikhonov regularisation.
+2. `gsax.analyze_hdmr()` normalises inputs to $[0, 1]$, optionally
+   standardises outputs once over the sample axis via
+   `prenormalize=True`, builds B-spline basis matrices, and fits component
+   functions via backfitting with Tikhonov regularisation.
 3. The ANCOVA decomposition splits each component's variance into structural ($S_a$) and correlative ($S_b$) parts. Total-order indices ($S_T$) sum contributions from all terms involving a given parameter.
+
+When HDMR prenormalization is enabled, the fitted surrogate is trained on the
+standardized outputs but `emulate_hdmr()` maps predictions back to the original
+output scale before returning them.
 
 ### Index summary
 

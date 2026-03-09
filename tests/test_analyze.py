@@ -108,9 +108,58 @@ def test_repeated_no_bootstrap_calls_identical():
     first = gsax.analyze(sr, Y)
     second = gsax.analyze(sr, Y)
 
-    np.testing.assert_allclose(first.S1, second.S1, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(first.ST, second.ST, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(first.S2, second.S2, rtol=1e-6, atol=1e-6, equal_nan=True)
+    np.testing.assert_allclose(np.asarray(first.S1), np.asarray(second.S1), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(np.asarray(first.ST), np.asarray(second.ST), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(first.S2),
+        np.asarray(second.S2),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
+
+
+def test_explicit_prenormalize_false_matches_default():
+    """Explicit prenormalize=False should preserve the default Sobol path."""
+    sr = gsax.sample(PROBLEM, n_samples=2**10, seed=17, verbose=False)
+    Y = evaluate(jnp.asarray(sr.samples))
+
+    default = gsax.analyze(sr, Y)
+    explicit = gsax.analyze(sr, Y, prenormalize=False)
+
+    np.testing.assert_allclose(
+        np.asarray(default.S1), np.asarray(explicit.S1), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(default.ST), np.asarray(explicit.ST), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(default.S2),
+        np.asarray(explicit.S2),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
+
+
+def test_prenormalize_point_estimates_are_offset_invariant():
+    """prenormalize=True should make Sobol point estimates shift-invariant."""
+    sr = gsax.sample(PROBLEM, n_samples=2**10, seed=19, verbose=False)
+    Y = evaluate(jnp.asarray(sr.samples))
+    Y_shifted = Y + 123.0
+
+    base = gsax.analyze(sr, Y, prenormalize=True)
+    shifted = gsax.analyze(sr, Y_shifted, prenormalize=True)
+
+    np.testing.assert_allclose(np.asarray(base.S1), np.asarray(shifted.S1), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(np.asarray(base.ST), np.asarray(shifted.ST), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(base.S2),
+        np.asarray(shifted.S2),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
 
 
 def test_repeated_bootstrap_calls_identical():
@@ -122,12 +171,74 @@ def test_repeated_bootstrap_calls_identical():
     first = gsax.analyze(sr, Y, num_resamples=20, key=key)
     second = gsax.analyze(sr, Y, num_resamples=20, key=key)
 
-    np.testing.assert_allclose(first.S1, second.S1, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(first.ST, second.ST, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(first.S2, second.S2, rtol=1e-6, atol=1e-6, equal_nan=True)
-    np.testing.assert_allclose(first.S1_conf, second.S1_conf, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(first.ST_conf, second.ST_conf, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(first.S2_conf, second.S2_conf, rtol=1e-6, atol=1e-6, equal_nan=True)
+    np.testing.assert_allclose(np.asarray(first.S1), np.asarray(second.S1), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(np.asarray(first.ST), np.asarray(second.ST), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(first.S2),
+        np.asarray(second.S2),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(first.S1_conf),
+        np.asarray(second.S1_conf),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(first.ST_conf),
+        np.asarray(second.ST_conf),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(first.S2_conf),
+        np.asarray(second.S2_conf),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
+
+
+def test_prenormalize_bootstrap_is_offset_invariant():
+    """prenormalize=True should keep bootstrap outputs invariant to shifts in Y."""
+    sr = gsax.sample(PROBLEM, n_samples=2**10, seed=23, verbose=False)
+    Y = evaluate(jnp.asarray(sr.samples))
+    Y_shifted = Y + 123.0
+    key = jax.random.key(321)
+
+    base = gsax.analyze(sr, Y, num_resamples=20, key=key, prenormalize=True)
+    shifted = gsax.analyze(sr, Y_shifted, num_resamples=20, key=key, prenormalize=True)
+
+    np.testing.assert_allclose(np.asarray(base.S1), np.asarray(shifted.S1), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(np.asarray(base.ST), np.asarray(shifted.ST), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(base.S2),
+        np.asarray(shifted.S2),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        np.asarray(base.S1_conf),
+        np.asarray(shifted.S1_conf),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(base.ST_conf),
+        np.asarray(shifted.ST_conf),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(base.S2_conf),
+        np.asarray(shifted.S2_conf),
+        rtol=1e-5,
+        atol=2e-6,
+        equal_nan=True,
+    )
 
 
 def _legacy_sampling_result(sr: SamplingResult) -> SamplingResult:
@@ -172,6 +283,39 @@ def test_unique_bootstrap_matches_expanded_layout():
     legacy_sr = _legacy_sampling_result(sr)
     Y_expanded = Y_unique[sr.expanded_to_unique]
     result_expanded = gsax.analyze(legacy_sr, Y_expanded, num_resamples=50, key=key)
+
+    assert np.allclose(np.asarray(result_unique.S1), np.asarray(result_expanded.S1))
+    assert np.allclose(np.asarray(result_unique.ST), np.asarray(result_expanded.ST))
+    assert np.allclose(
+        np.asarray(result_unique.S2),
+        np.asarray(result_expanded.S2),
+        equal_nan=True,
+    )
+    assert np.allclose(np.asarray(result_unique.S1_conf), np.asarray(result_expanded.S1_conf))
+    assert np.allclose(np.asarray(result_unique.ST_conf), np.asarray(result_expanded.ST_conf))
+    assert np.allclose(
+        np.asarray(result_unique.S2_conf),
+        np.asarray(result_expanded.S2_conf),
+        equal_nan=True,
+    )
+
+
+def test_unique_bootstrap_prenormalize_matches_expanded_layout():
+    """prenormalize=True should preserve unique-vs-expanded bootstrap equivalence."""
+    sr = gsax.sample(PROBLEM, n_samples=1024, seed=29, verbose=False)
+    Y_unique = evaluate(jnp.asarray(sr.samples))
+    key = jax.random.key(456)
+    result_unique = gsax.analyze(sr, Y_unique, num_resamples=50, key=key, prenormalize=True)
+
+    legacy_sr = _legacy_sampling_result(sr)
+    Y_expanded = Y_unique[sr.expanded_to_unique]
+    result_expanded = gsax.analyze(
+        legacy_sr,
+        Y_expanded,
+        num_resamples=50,
+        key=key,
+        prenormalize=True,
+    )
 
     assert np.allclose(np.asarray(result_unique.S1), np.asarray(result_expanded.S1))
     assert np.allclose(np.asarray(result_unique.ST), np.asarray(result_expanded.ST))

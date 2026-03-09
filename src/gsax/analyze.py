@@ -27,6 +27,7 @@ from gsax._indices import (
     second_order,
     total_order,
 )
+from gsax._normalization import _prenormalize_outputs
 from gsax.results import SAResult
 from gsax.sampling import SamplingResult, _saltelli_step
 
@@ -539,6 +540,7 @@ def analyze(
     sampling_result: SamplingResult,
     Y: Array,
     *,
+    prenormalize: bool = False,
     num_resamples: int = 0,
     conf_level: float = 0.95,
     key: Array | None = None,
@@ -561,6 +563,11 @@ def analyze(
                 (n_total, K)     — K outputs, single time step
                 (n_total, T, K)  — K outputs over T time steps
             where ``n_total`` is the unique row count.
+        prenormalize: When ``True``, apply SALib-style global output
+            standardization over the cleaned expanded sample axis before
+            computing Sobol indices. Each output slice is centered to mean 0
+            and scaled to unit standard deviation once, not per bootstrap
+            resample. Defaults to ``False``.
         num_resamples: R, the number of bootstrap resamples for confidence
             intervals. Set to 0 (default) to skip bootstrap.
         conf_level: Confidence level for bootstrap CIs (default 0.95).
@@ -597,6 +604,9 @@ def analyze(
         )
         if Y.shape[0] == 0:
             raise ValueError("All samples contain non-finite values")
+
+    if prenormalize:
+        Y, _, _, _ = _prenormalize_outputs(Y)
 
     _warn_zero_variance_slices(Y)
 

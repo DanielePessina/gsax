@@ -16,6 +16,7 @@ Y = evaluate(sampling_result.samples)
 result = gsax.analyze(
     sampling_result,
     Y,
+    prenormalize=True,
     num_resamples=200,
     conf_level=0.95,
     key=jax.random.key(0),
@@ -44,6 +45,9 @@ The bootstrap adds a leading dimension of 2 for `[lower, upper]`:
 ## Practical caveats
 
 - A `jax.random.key(...)` is required when `num_resamples > 0`.
+- `prenormalize=True` applies SALib-style output standardization once over the
+  sample axis before the bootstrap starts. The resamples reuse that transformed
+  output array; they are not re-standardized per resample.
 - Set `num_resamples=0` to skip bootstrap entirely when you only need point
   estimates.
 - If `calc_second_order=False` during sampling, then `result.S2` and
@@ -51,6 +55,8 @@ The bootstrap adds a leading dimension of 2 for `[lower, upper]`:
 - Bootstrap intervals follow the same output-shape rules as the point estimates,
   so the page on [Multi-Output & Time-Series](/examples/multi-output) is the
   right companion when your model is not scalar.
+- Confidence intervals remain percentile lower/upper bounds even when
+  `prenormalize=True`; this differs from SALib's symmetric confidence widths.
 
 ## See also
 

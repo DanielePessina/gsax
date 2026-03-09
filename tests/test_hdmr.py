@@ -93,13 +93,30 @@ def test_shapes_1d(ishigami_data):
     assert result.Sb.shape == (n_terms,)
     assert result.S.shape == (n_terms,)
     assert result.ST.shape == (D,)
+    assert result.rmse is not None
     assert result.rmse.shape == ()
     assert result.emulator is not None
-    assert set(result.emulator) == {"C1", "C2", "C3", "f0", "m", "maxorder", "c2", "c3"}
+    assert set(result.emulator) == {
+        "C1",
+        "C2",
+        "C3",
+        "f0",
+        "prenormalize",
+        "y_mean",
+        "y_std",
+        "m",
+        "maxorder",
+        "c2",
+        "c3",
+    }
     assert result.emulator["C1"].shape == (5, 3)
+    assert result.emulator["C2"] is not None
     assert result.emulator["C2"].shape == (25, 3)
     assert result.emulator["C3"] is None
     assert result.emulator["f0"].shape == ()
+    assert result.emulator["y_mean"].shape == ()
+    assert result.emulator["y_std"].shape == ()
+    assert result.emulator["prenormalize"] is False
 
 
 def test_shapes_2d(ishigami_data):
@@ -118,9 +135,11 @@ def test_shapes_2d(ishigami_data):
     n_terms = D + D * (D - 1) // 2
     assert result.Sa.shape == (K, n_terms)
     assert result.ST.shape == (K, D)
+    assert result.rmse is not None
     assert result.rmse.shape == (K,)
     assert result.emulator is not None
     assert result.emulator["C1"].shape == (K, 5, 3)
+    assert result.emulator["C2"] is not None
     assert result.emulator["C2"].shape == (K, 25, 3)
     assert result.emulator["C3"] is None
     assert result.emulator["f0"].shape == (K,)
@@ -142,9 +161,11 @@ def test_shapes_3d(ishigami_data):
     n_terms = D + D * (D - 1) // 2
     assert result.Sa.shape == (T, K, n_terms)
     assert result.ST.shape == (T, K, D)
+    assert result.rmse is not None
     assert result.rmse.shape == (T, K)
     assert result.emulator is not None
     assert result.emulator["C1"].shape == (T, K, 5, 3)
+    assert result.emulator["C2"] is not None
     assert result.emulator["C2"].shape == (T, K, 25, 3)
     assert result.emulator["C3"] is None
     assert result.emulator["f0"].shape == (T, K)
@@ -165,11 +186,26 @@ def test_chunk_size_regression(ishigami_data):
         chunk_size=1,
     )
 
-    np.testing.assert_allclose(result_default.Sa, result_chunked.Sa, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.Sb, result_chunked.Sb, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.S, result_chunked.S, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.ST, result_chunked.ST, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.rmse, result_chunked.rmse, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(result_default.Sa), np.asarray(result_chunked.Sa), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_default.Sb), np.asarray(result_chunked.Sb), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_default.S), np.asarray(result_chunked.S), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_default.ST), np.asarray(result_chunked.ST), rtol=1e-6, atol=1e-6
+    )
+    assert result_default.rmse is not None
+    assert result_chunked.rmse is not None
+    np.testing.assert_allclose(
+        np.asarray(result_default.rmse),
+        np.asarray(result_chunked.rmse),
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 def test_chunk_size_regression_3d(ishigami_data):
@@ -194,18 +230,38 @@ def test_chunk_size_regression_3d(ishigami_data):
         chunk_size=1,
     )
 
-    np.testing.assert_allclose(result_default.Sa, result_chunked.Sa, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.Sb, result_chunked.Sb, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.S, result_chunked.S, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.ST, result_chunked.ST, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_default.rmse, result_chunked.rmse, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(result_default.Sa), np.asarray(result_chunked.Sa), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_default.Sb), np.asarray(result_chunked.Sb), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_default.S), np.asarray(result_chunked.S), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_default.ST), np.asarray(result_chunked.ST), rtol=1e-6, atol=1e-6
+    )
+    assert result_default.rmse is not None
+    assert result_chunked.rmse is not None
+    np.testing.assert_allclose(
+        np.asarray(result_default.rmse),
+        np.asarray(result_chunked.rmse),
+        rtol=1e-6,
+        atol=1e-6,
+    )
     assert result_default.emulator is not None
     assert result_chunked.emulator is not None
     np.testing.assert_allclose(
         result_default.emulator["C1"], result_chunked.emulator["C1"], rtol=1e-4, atol=5e-3
     )
+    assert result_default.emulator["C2"] is not None
+    assert result_chunked.emulator["C2"] is not None
     np.testing.assert_allclose(
-        result_default.emulator["C2"], result_chunked.emulator["C2"], rtol=1e-4, atol=2e-3
+        np.asarray(result_default.emulator["C2"]),
+        np.asarray(result_chunked.emulator["C2"]),
+        rtol=1e-4,
+        atol=2e-3,
     )
     np.testing.assert_allclose(
         result_default.emulator["f0"], result_chunked.emulator["f0"], rtol=1e-4, atol=5e-3
@@ -224,18 +280,79 @@ def test_repeated_calls_identical(ishigami_data):
     result_first = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2)
     result_second = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2)
 
-    np.testing.assert_allclose(result_first.Sa, result_second.Sa, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_first.Sb, result_second.Sb, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_first.S, result_second.S, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_first.ST, result_second.ST, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(result_first.rmse, result_second.rmse, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(
-        result_first.emulator["C1"], result_second.emulator["C1"], rtol=1e-6, atol=1e-6
+        np.asarray(result_first.Sa), np.asarray(result_second.Sa), rtol=1e-6, atol=1e-6
     )
     np.testing.assert_allclose(
-        result_first.emulator["C2"], result_second.emulator["C2"], rtol=1e-6, atol=1e-6
+        np.asarray(result_first.Sb), np.asarray(result_second.Sb), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_first.S), np.asarray(result_second.S), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_first.ST), np.asarray(result_second.ST), rtol=1e-6, atol=1e-6
+    )
+    assert result_first.rmse is not None
+    assert result_second.rmse is not None
+    np.testing.assert_allclose(
+        np.asarray(result_first.rmse),
+        np.asarray(result_second.rmse),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    assert result_first.emulator is not None
+    assert result_second.emulator is not None
+    np.testing.assert_allclose(
+        np.asarray(result_first.emulator["C1"]),
+        np.asarray(result_second.emulator["C1"]),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(result_first.emulator["C2"]),
+        np.asarray(result_second.emulator["C2"]),
+        rtol=1e-6,
+        atol=1e-6,
     )
     assert result_first.terms == result_second.terms
+
+
+def test_explicit_prenormalize_false_matches_default(ishigami_data):
+    """Explicit prenormalize=False should preserve the default HDMR path."""
+    X, Y = ishigami_data
+    default = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2)
+    explicit = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2, prenormalize=False)
+
+    np.testing.assert_allclose(
+        np.asarray(default.Sa), np.asarray(explicit.Sa), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(default.Sb), np.asarray(explicit.Sb), rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(np.asarray(default.S), np.asarray(explicit.S), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(default.ST), np.asarray(explicit.ST), rtol=1e-6, atol=1e-6
+    )
+    assert default.rmse is not None
+    assert explicit.rmse is not None
+    np.testing.assert_allclose(
+        np.asarray(default.rmse),
+        np.asarray(explicit.rmse),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
+def test_prenormalize_is_shift_scale_invariant(ishigami_data):
+    """prenormalize=True should make HDMR sensitivities invariant to affine Y changes."""
+    X, Y = ishigami_data
+    Y_affine = 3.0 * Y + 17.0
+
+    base = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2, prenormalize=True)
+    affine = analyze_hdmr(PROBLEM, X, Y_affine, maxorder=2, m=2, prenormalize=True)
+
+    np.testing.assert_allclose(np.asarray(base.S1), np.asarray(affine.S1), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(np.asarray(base.ST), np.asarray(affine.ST), rtol=1e-6, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +428,23 @@ def test_emulator_reasonable(hdmr_result, ishigami_data):
     assert abs(float(jnp.mean(Y_pred)) - float(jnp.mean(Y))) < 1.0
 
 
+def test_prenormalize_emulator_predictions_and_rmse_stay_on_original_scale(ishigami_data):
+    """prenormalized HDMR fits should still predict and report RMSE in original units."""
+    X, Y = ishigami_data
+    Y_affine = 3.0 * Y + 17.0
+
+    result = analyze_hdmr(PROBLEM, X, Y_affine, maxorder=2, m=2, prenormalize=True)
+    Y_pred = emulate_hdmr(result, X)
+    rmse = float(jnp.sqrt(jnp.mean(jnp.square(Y_affine - Y_pred))))
+
+    assert result.emulator is not None
+    assert result.emulator["prenormalize"] is True
+    assert Y_pred.shape == Y_affine.shape
+    assert result.rmse is not None
+    np.testing.assert_allclose(np.asarray(result.rmse), rmse, rtol=1e-6, atol=1e-6)
+    assert abs(float(jnp.mean(Y_pred)) - float(jnp.mean(Y_affine))) < 3.0
+
+
 def test_multi_output_analytical_ishigami_emulator(ishigami_data):
     """Multi-output HDMR should keep per-output coefficients and predictions."""
     X, Y = ishigami_data
@@ -319,7 +453,9 @@ def test_multi_output_analytical_ishigami_emulator(ishigami_data):
     result = analyze_hdmr(PROBLEM, X, Y_multi, maxorder=2, m=2)
     Y_pred = emulate_hdmr(result, X)
 
+    assert result.emulator is not None
     assert result.emulator["C1"].shape == (2, 5, 3)
+    assert result.emulator["C2"] is not None
     assert result.emulator["C2"].shape == (2, 25, 3)
     assert result.emulator["f0"].shape == (2,)
     assert Y_pred.shape == Y_multi.shape
@@ -350,7 +486,9 @@ def test_time_series_multi_output_emulator_preserves_axes(ishigami_data):
     result = analyze_hdmr(PROBLEM, X, Y_tk, maxorder=2, m=2)
     Y_pred = emulate_hdmr(result, X)
 
+    assert result.emulator is not None
     assert result.emulator["C1"].shape == (2, 2, 5, 3)
+    assert result.emulator["C2"] is not None
     assert result.emulator["C2"].shape == (2, 2, 25, 3)
     assert result.emulator["f0"].shape == (2, 2)
     assert Y_pred.shape == Y_tk.shape
@@ -372,8 +510,10 @@ def test_multi_output_emulator_preserves_non_proportional_outputs(ishigami_data)
 
     assert result.emulator is not None
     assert result.emulator["C1"].shape == (2, 5, 3)
+    assert result.emulator["C2"] is not None
     assert result.emulator["C2"].shape == (2, 25, 3)
     assert result.emulator["f0"].shape == (2,)
+    assert result.rmse is not None
     assert result.rmse.shape == (2,)
     assert Y_pred.shape == Y_multi.shape
 
@@ -439,7 +579,7 @@ def test_constant_y():
 def test_scalar_like_lambdax(ishigami_data):
     """Scalar-like lambdax inputs should still be accepted."""
     X, Y = ishigami_data
-    result = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2, lambdax=jnp.array(0.01))
+    result = analyze_hdmr(PROBLEM, X, Y, maxorder=2, m=2, lambdax=float(jnp.array(0.01)))
     assert result.Sa.shape[0] == PROBLEM.num_vars + PROBLEM.num_vars * (PROBLEM.num_vars - 1) // 2
 
 

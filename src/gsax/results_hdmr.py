@@ -11,12 +11,20 @@ from gsax.problem import Problem
 
 
 class HDMREmulator(TypedDict):
-    """Typed emulator payload returned inside ``HDMRResult``."""
+    """Typed emulator payload returned inside ``HDMRResult``.
+
+    The coefficient arrays are stored on the fitted analysis scale. When
+    ``prenormalize`` is ``True``, ``y_mean`` and ``y_std`` are used by
+    ``emulate_hdmr()`` to map predictions back to the original output scale.
+    """
 
     C1: Array
     C2: Array | None
     C3: Array | None
     f0: Array
+    prenormalize: bool
+    y_mean: Array
+    y_std: Array
     m: int
     maxorder: int
     c2: list[tuple[int, int]]
