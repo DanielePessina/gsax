@@ -15,6 +15,7 @@ Array shape conventions used throughout:
 """
 
 from functools import lru_cache
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -170,6 +171,26 @@ def _warn_zero_variance_slices(Y: Array) -> None:
             f"{affected} — corresponding Sobol indices will be NaN",
             stacklevel=4,
         )
+
+
+def _bootstrap_ci_endpoints(
+    estimate: Array,
+    bootstrap_draws: Array,
+    *,
+    conf_level: float,
+    ci_method: Literal["quantile", "gaussian"],
+) -> tuple[Array, Array]:
+    """Convert bootstrap draws into lower and upper endpoint arrays."""
+    alpha = (1.0 - conf_level) / 2.0
+    if ci_method == "quantile":
+        percentiles = jnp.array([alpha * 100, (1.0 - alpha) * 100])
+        endpoints = jnp.percentile(bootstrap_draws, percentiles, axis=0)
+        return endpoints[0], endpoints[1]
+
+    z_score = jax.scipy.special.ndtri(1.0 - alpha)
+    bootstrap_sd = jnp.std(bootstrap_draws, axis=0)
+    half_width = z_score * bootstrap_sd
+    return estimate - half_width, estimate + half_width
 
 
 def _separate_output_values(
@@ -422,6 +443,7 @@ def _analyze_bootstrap(
     *,
     num_resamples: int,
     conf_level: float,
+    ci_method: Literal["quantile", "gaussian"],
     key: Array,
     chunk_size: int,
 ) -> SAResult:
@@ -437,9 +459,6 @@ def _analyze_bootstrap(
     base_n = A.shape[0]
 
     indices = jax.random.randint(key, shape=(num_resamples, base_n), minval=0, maxval=base_n)
-
-    alpha = (1.0 - conf_level) / 2.0
-    percentiles = jnp.array([alpha * 100, (1.0 - alpha) * 100])
 
     jit_ft = _get_bootstrap_point_kernel(False)
     if calc_second_order:
@@ -466,9 +485,14 @@ def _analyze_bootstrap(
                 s1_boot, st_boot, s2_boot = _bootstrap_second_order(
                     indices, a, ab, ba, b, chunk_size
                 )
-                s2_ci = jnp.percentile(s2_boot, percentiles, axis=0)
-                S2_lo_list.append(s2_ci[0])
-                S2_hi_list.append(s2_ci[1])
+                s2_lo, s2_hi = _bootstrap_ci_endpoints(
+                    s2,
+                    s2_boot,
+                    conf_level=conf_level,
+                    ci_method=ci_method,
+                )
+                S2_lo_list.append(s2_lo)
+                S2_hi_list.append(s2_hi)
             else:
                 s1, st = jit_ft(a, ab, b)
                 s1_boot, st_boot = _bootstrap_first_total(indices, a, ab, b, chunk_size)
@@ -476,12 +500,22 @@ def _analyze_bootstrap(
             S1_list.append(s1)
             ST_list.append(st)
 
-            s1_ci = jnp.percentile(s1_boot, percentiles, axis=0)
-            st_ci = jnp.percentile(st_boot, percentiles, axis=0)
-            S1_lo_list.append(s1_ci[0])
-            S1_hi_list.append(s1_ci[1])
-            ST_lo_list.append(st_ci[0])
-            ST_hi_list.append(st_ci[1])
+            s1_lo, s1_hi = _bootstrap_ci_endpoints(
+                s1,
+                s1_boot,
+                conf_level=conf_level,
+                ci_method=ci_method,
+            )
+            st_lo, st_hi = _bootstrap_ci_endpoints(
+                st,
+                st_boot,
+                conf_level=conf_level,
+                ci_method=ci_method,
+            )
+            S1_lo_list.append(s1_lo)
+            S1_hi_list.append(s1_hi)
+            ST_lo_list.append(st_lo)
+            ST_hi_list.append(st_hi)
 
     S1_out = jnp.stack(S1_list).reshape(T, K, D)
     ST_out = jnp.stack(ST_list).reshape(T, K, D)
@@ -543,6 +577,7 @@ def analyze(
     prenormalize: bool = False,
     num_resamples: int = 0,
     conf_level: float = 0.95,
+    ci_method: Literal["quantile", "gaussian"] = "quantile",
     key: Array | None = None,
     chunk_size: int = 2048,
 ) -> SAResult:
@@ -571,6 +606,11 @@ def analyze(
         num_resamples: R, the number of bootstrap resamples for confidence
             intervals. Set to 0 (default) to skip bootstrap.
         conf_level: Confidence level for bootstrap CIs (default 0.95).
+        ci_method: Bootstrap CI endpoint method. ``"quantile"`` returns
+            percentile lower/upper endpoints from the bootstrap draws.
+            ``"gaussian"`` returns symmetric gaussian lower/upper endpoints
+            from the bootstrap standard deviation around the point estimate.
+            Both methods still return lower/upper bounds, not half-widths.
         key: JAX PRNG key for bootstrap randomness. Required when
             ``num_resamples > 0``.
         chunk_size: Controls vmap batch size. In the no-bootstrap path this
@@ -610,6 +650,9 @@ def analyze(
 
     _warn_zero_variance_slices(Y)
 
+    if ci_method not in {"quantile", "gaussian"}:
+        raise ValueError("ci_method must be one of {'quantile', 'gaussian'}")
+
     if num_resamples > 0:
         if key is None:
             raise ValueError("key is required when num_resamples > 0")
@@ -618,6 +661,7 @@ def analyze(
             Y,
             num_resamples=num_resamples,
             conf_level=conf_level,
+            ci_method=ci_method,
             key=key,
             chunk_size=chunk_size,
         )

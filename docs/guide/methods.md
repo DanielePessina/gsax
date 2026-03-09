@@ -91,8 +91,10 @@ $$
 Optional: `gsax.analyze(..., prenormalize=True)` applies SALib-style output
 standardization once per output slice over the sample axis before computing the
 Sobol estimators. This changes the point-estimate path to align more closely
-with SALib, but `gsax` still reports percentile bootstrap lower/upper bounds
-rather than SALib's symmetric confidence widths.
+with SALib. When bootstrapping, `ci_method="quantile"` reports percentile
+bootstrap lower/upper bounds, while `ci_method="gaussian"` reports symmetric
+gaussian lower/upper bounds from the bootstrap standard deviation. `gsax` still
+returns endpoint arrays rather than SALib's symmetric confidence widths.
 
 ### Index summary
 

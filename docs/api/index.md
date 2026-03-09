@@ -247,6 +247,7 @@ def analyze(
     prenormalize: bool = False,
     num_resamples: int = 0,
     conf_level: float = 0.95,
+    ci_method: Literal["quantile", "gaussian"] = "quantile",
     key: Array | None = None,
     chunk_size: int = 2048,
 ) -> SAResult
@@ -259,6 +260,7 @@ def analyze(
 | `prenormalize` | `bool` | `False` | Apply SALib-style output standardization over the sample axis before analysis. |
 | `num_resamples` | `int` | `0` | Number of bootstrap resamples. |
 | `conf_level` | `float` | `0.95` | Confidence level for bootstrap intervals. |
+| `ci_method` | `Literal["quantile", "gaussian"]` | `"quantile"` | Bootstrap CI summary method. `quantile` returns percentile endpoints; `gaussian` returns symmetric gaussian endpoints from bootstrap standard deviation. |
 | `key` | `Array \| None` | `None` | Required JAX PRNG key when `num_resamples > 0`. |
 | `chunk_size` | `int` | `2048` | `(T, K)` output combinations per batch on the no-bootstrap path. |
 
@@ -275,13 +277,17 @@ Validation and behavior:
 - When `prenormalize=True`, `Y` is centered and scaled once per output slice
   over the sample axis after Saltelli reconstruction and non-finite-group
   cleanup.
+- `ci_method` accepts `"quantile"` and `"gaussian"`. The option is ignored
+  when `num_resamples == 0` because no CI arrays are produced.
 - If `num_resamples > 0`, `key` is required or `ValueError` is raised.
 - Sample groups containing any non-finite values are dropped before analysis.
 - If every group is invalid, `ValueError("All samples contain non-finite values")`
   is raised.
 - Zero-variance slices emit warnings because Sobol indices become undefined.
-- Bootstrap intervals remain percentile lower/upper bounds even when
-  `prenormalize=True`.
+- Bootstrap intervals always remain lower/upper endpoint arrays, not SALib-style
+  half-widths. `ci_method="quantile"` uses percentile endpoints, while
+  `ci_method="gaussian"` uses symmetric gaussian endpoints from bootstrap
+  standard deviation.
 
 Returns: [`SAResult`](#saresult)
 

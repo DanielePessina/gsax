@@ -196,6 +196,7 @@ result = gsax.analyze(
     sampling_result,
     Y,
     prenormalize=False,  # optional SALib-style output standardization
+    # ci_method="quantile",  # optional bootstrap CI summary method
     chunk_size=64,  # optional: limit vmap batch size for memory control
 )
 
@@ -205,8 +206,11 @@ result = gsax.analyze(
 
 Set `prenormalize=True` when you want global output standardization over the
 sample axis before analysis. The default `False` preserves the current gsax
-behavior. Sobol bootstrap intervals remain percentile lower/upper bounds even
-when prenormalization is enabled.
+behavior. When bootstrapping with `num_resamples > 0`, use
+`ci_method="quantile"` for percentile bootstrap lower/upper endpoints or
+`ci_method="gaussian"` for symmetric gaussian lower/upper endpoints computed
+from the bootstrap standard deviation. Both options still return endpoint
+arrays, not SALib-style confidence half-widths, even when `prenormalize=True`.
 
 ### Multi-output models
 
