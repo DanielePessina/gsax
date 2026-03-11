@@ -259,6 +259,10 @@ def analyze_hdmr(
         y_mean = jnp.zeros(Y_3d.shape[1:], dtype=Y_3d.dtype)
         y_std = jnp.ones(Y_3d.shape[1:], dtype=Y_3d.dtype)
 
+    from gsax.analyze import _warn_zero_variance_slices
+
+    _warn_zero_variance_slices(Y_3d, output_names=problem.output_names)
+
     Y_flat = Y_3d.transpose(1, 2, 0).reshape(T * K_out, N)
     total = T * K_out
     cs = min(chunk_size, total)
