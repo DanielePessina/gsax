@@ -121,18 +121,45 @@ def _count_nans(
     return counts
 
 
-def _warn_zero_variance_slices(Y: Array) -> None:
+def _warn_zero_variance_slices(
+    Y: Array,
+    output_names: tuple[str, ...] | None = None,
+) -> None:
     """Check for zero-variance output slices before analysis and warn.
 
     Y is in expanded Saltelli form with shape ``(n_expanded, ...)`` where
     trailing dims are ``()``, ``(K,)``, or ``(T, K)``.  We check variance
     across the sample axis for each output slice.
+
+    Args:
+        Y: Model output array.
+        output_names: Optional names for the K output dimension.
     """
     import warnings
 
     # Collapse to (n_expanded, n_outputs)
     flat = Y.reshape(Y.shape[0], -1)
     n_outputs = flat.shape[1]
+
+    # Infer K from trailing shape for validation
+    trailing = Y.shape[1:]
+    if len(trailing) == 0:
+        K = 1
+    elif len(trailing) == 1:
+        K = trailing[0]
+    else:
+        K = trailing[1]
+
+    if output_names is not None and len(output_names) != K:
+        raise ValueError(
+            f"len(output_names)={len(output_names)} does not match "
+            f"number of outputs K={K}"
+        )
+
+    def _fmt_k(k: int) -> str:
+        if output_names is not None:
+            return f"k={k} ('{output_names[k]}')"
+        return f"k={k}"
 
     # Variance per output slice (across all expanded rows)
     var_per_slice = jnp.var(flat, axis=0)
@@ -143,33 +170,48 @@ def _warn_zero_variance_slices(Y: Array) -> None:
         return
 
     if n_outputs == 1:
-        warnings.warn(
-            "gsax: output has zero variance — all Sobol indices will be NaN",
-            stacklevel=4,
-        )
+        if output_names is not None and len(output_names) == 1:
+            msg = (
+                f"gsax: output '{output_names[0]}' has zero variance "
+                "— all indices will be NaN"
+            )
+        else:
+            msg = "gsax: output has zero variance — all indices will be NaN"
+        warnings.warn(msg, stacklevel=2)
         return
 
     # Recover original shape labels
-    trailing = Y.shape[1:]
     zero_indices = [int(i) for i in jnp.where(zero_mask)[0]]
 
     if len(trailing) == 1:
         # (K,) — list affected output indices
+        labels = [_fmt_k(k) for k in zero_indices]
+        if len(labels) > 5:
+            shown = ", ".join(labels[:5])
+            extra = f"... and {len(labels) - 5} more"
+            label_str = f"{shown}, {extra}"
+        else:
+            label_str = ", ".join(labels)
         warnings.warn(
             f"gsax: {n_zero}/{n_outputs} output(s) have zero variance "
-            f"(k={zero_indices}) — corresponding Sobol indices will be NaN",
-            stacklevel=4,
+            f"({label_str}) — corresponding indices will be NaN",
+            stacklevel=2,
         )
     elif len(trailing) == 2:
-        K = trailing[1]
         affected = []
         for idx in zero_indices:
             t, k = divmod(idx, K)
-            affected.append(f"(t={t},k={k})")
+            affected.append(f"(t={t}, {_fmt_k(k)})")
+        if len(affected) > 5:
+            shown = ", ".join(affected[:5])
+            extra = f"... and {len(affected) - 5} more"
+            label_str = f"{shown}, {extra}"
+        else:
+            label_str = ", ".join(affected)
         warnings.warn(
             f"gsax: {n_zero}/{n_outputs} output slice(s) have zero variance "
-            f"{affected} — corresponding Sobol indices will be NaN",
-            stacklevel=4,
+            f"[{label_str}] — corresponding indices will be NaN",
+            stacklevel=2,
         )
 
 
@@ -634,13 +676,14 @@ def analyze(
     if n_dropped > 0:
         import warnings
 
-        total_groups = Y.shape[0] // step + n_dropped
+        remaining = Y.shape[0] // step
+        total_groups = remaining + n_dropped
+        pct = 100.0 * n_dropped / total_groups
         warnings.warn(
-            (
-                "gsax: dropped "
-                f"{n_dropped} of {total_groups} sample groups "
-                "containing non-finite values"
-            )
+            f"gsax: dropped {n_dropped} of {total_groups} sample groups "
+            f"({pct:.1f}%) containing non-finite values; "
+            f"{remaining} groups remain",
+            stacklevel=2,
         )
         if Y.shape[0] == 0:
             raise ValueError("All samples contain non-finite values")
@@ -648,7 +691,7 @@ def analyze(
     if prenormalize:
         Y, _, _, _ = _prenormalize_outputs(Y)
 
-    _warn_zero_variance_slices(Y)
+    _warn_zero_variance_slices(Y, output_names=sampling_result.problem.output_names)
 
     if ci_method not in {"quantile", "gaussian"}:
         raise ValueError("ci_method must be one of {'quantile', 'gaussian'}")
