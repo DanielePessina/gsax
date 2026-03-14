@@ -4,9 +4,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.stats import truncnorm
 
 import gsax
 from gsax.benchmarks.ishigami import ANALYTICAL_S1, ANALYTICAL_S2, ANALYTICAL_ST, PROBLEM, evaluate
+from gsax.problem import GaussianInputSpec
 from gsax.sampling import SamplingResult
 
 
@@ -341,6 +343,53 @@ def test_repeated_gaussian_bootstrap_calls_identical():
         atol=1e-6,
         equal_nan=True,
     )
+
+
+def test_mixed_uniform_and_gaussian_linear_model_matches_analytical_indices():
+    problem = gsax.Problem.from_dict(
+        {
+            "uniform": (0.0, 2.0),
+            "gaussian": GaussianInputSpec(dist="gaussian", mean=1.0, variance=2.25),
+            "truncated": GaussianInputSpec(
+                dist="gaussian",
+                mean=0.5,
+                variance=1.44,
+                low=-0.5,
+                high=1.0,
+            ),
+        },
+        output_names=("response",),
+    )
+    sr = gsax.sample(
+        problem,
+        n_samples=8192,
+        calc_second_order=False,
+        seed=101,
+        verbose=False,
+    )
+
+    coeffs = jnp.array([1.5, -0.75, 2.0])
+    X = jnp.asarray(sr.samples)
+    Y = (X @ coeffs)[:, None, None]
+    result = gsax.analyze(sr, Y)
+
+    std = np.sqrt(1.44)
+    a = (-0.5 - 0.5) / std
+    b = (1.0 - 0.5) / std
+    variances = np.array(
+        [
+            (2.0 - 0.0) ** 2 / 12.0,
+            2.25,
+            truncnorm.var(a, b, loc=0.5, scale=std),
+        ]
+    )
+    coeff_sq = np.square(np.array([1.5, -0.75, 2.0]))
+    expected = coeff_sq * variances
+    expected = expected / expected.sum()
+
+    np.testing.assert_allclose(np.asarray(result.S1[0, 0]), expected, atol=0.03, rtol=0.03)
+    np.testing.assert_allclose(np.asarray(result.ST[0, 0]), expected, atol=0.03, rtol=0.03)
+    assert result.S2 is None
 
 
 def test_prenormalize_bootstrap_is_offset_invariant():

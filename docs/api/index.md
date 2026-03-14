@@ -18,6 +18,8 @@ Related docs:
 
 Top-level exports from `gsax`:
 
+- [`UniformInputSpec`](#uniforminputspec)
+- [`GaussianInputSpec`](#gaussianinputspec)
 - [`Problem`](#problem)
 - [`sample`](#sample)
 - [`SamplingResult`](#samplingresult)
@@ -34,28 +36,59 @@ Top-level exports from `gsax`:
 <a id="problem"></a>
 ### `Problem`
 
-Immutable dataclass defining parameter names, bounds, and optional output names.
+Immutable dataclass defining parameter names, optional finite bounds, and
+optional output names.
 
 ```python
 @dataclass(frozen=True)
 class Problem:
     names: tuple[str, ...]
-    bounds: tuple[tuple[float, float], ...]
+    bounds: tuple[tuple[float, float], ...] | None
     output_names: tuple[str, ...] | None = None
 ```
 
 | Field / Property | Type | Description |
 | --- | --- | --- |
 | `names` | `tuple[str, ...]` | Parameter names in model-input order. |
-| `bounds` | `tuple[tuple[float, float], ...]` | Inclusive lower and upper bound for each parameter. |
+| `bounds` | `tuple[tuple[float, float], ...] \| None` | Finite bounds for uniform-only problems, otherwise `None`. |
 | `output_names` | `tuple[str, ...] \| None` | Optional labels for output coordinates in `to_dataset()`. |
+| `has_non_uniform_inputs` | `bool` | Whether any parameter uses a non-uniform marginal. |
 | `num_vars` | `int` | Property returning `len(names)`. |
 
 Validation and behavior:
 
-- `Problem` is lightweight and does not validate matching lengths or bound ordering on construction.
-- Keep `names` and `bounds` aligned manually when instantiating directly.
+- The direct constructor remains the legacy uniform-only path.
+- `Problem(names=..., bounds=...)` validates matching lengths and `low < high`.
+- `Problem.from_dict(...)` is the canonical constructor for mixed uniform and Gaussian marginals.
 - Prefer `output_names` whenever results will be exported with `to_dataset()`.
+
+<a id="uniforminputspec"></a>
+#### `UniformInputSpec`
+
+```python
+class UniformInputSpec(TypedDict):
+    dist: Literal["uniform"]
+    low: float
+    high: float
+```
+
+<a id="gaussianinputspec"></a>
+#### `GaussianInputSpec`
+
+```python
+class GaussianInputSpec(TypedDict):
+    dist: Literal["gaussian"]
+    mean: float
+    variance: float
+    low: NotRequired[float]
+    high: NotRequired[float]
+```
+
+Gaussian semantics:
+
+- `mean` and `variance` describe the parent Gaussian before truncation.
+- `low` and `high` are optional one-sided or two-sided truncation bounds.
+- When either bound is present, Sobol sampling uses a true truncated normal transform.
 
 <a id="problem-from-dict"></a>
 #### `Problem.from_dict()`
@@ -64,13 +97,19 @@ Validation and behavior:
 @classmethod
 def from_dict(
     cls,
-    params: dict[str, tuple[float, float]],
+    params: dict[
+        str,
+        tuple[float, float] | UniformInputSpec | GaussianInputSpec,
+    ],
     output_names: tuple[str, ...] | None = None,
 ) -> Problem
 ```
 
-`params` keys become `names`, values become `bounds`, preserving insertion
-order.
+`params` keys become `names` in insertion order. Each value may be:
+
+- `(low, high)` as the legacy uniform shorthand
+- `UniformInputSpec`
+- `GaussianInputSpec`
 
 Minimal example:
 
@@ -80,19 +119,30 @@ import gsax
 problem = gsax.Problem.from_dict(
     {
         "amplitude": (0.5, 2.0),
-        "frequency": (1.0, 5.0),
-        "damping": (0.01, 0.5),
+        "frequency": {
+            "dist": "gaussian",
+            "mean": 3.0,
+            "variance": 0.25,
+        },
+        "damping": {
+            "dist": "gaussian",
+            "mean": 0.2,
+            "variance": 0.01,
+            "low": 0.01,
+        },
     },
     output_names=("displacement", "velocity"),
 )
 
 print(problem.num_vars)  # 3
+print(problem.bounds)    # None
 ```
 
 Related links:
 
 - [Getting Started](/guide/getting-started)
 - [Advanced Workflow](/examples/advanced-workflow)
+- [Non-Uniform Inputs](/examples/non-uniform-inputs)
 
 ## Sobol Workflow
 
@@ -128,6 +178,11 @@ Shape and behavior:
 
 - `sample()` returns unique rows only, not the expanded Saltelli matrix.
 - The returned sample matrix has shape `(n_total, D)`.
+- Saltelli construction still happens in the unit cube, then each marginal is
+  transformed according to the declared input distribution.
+- Uniform inputs use an affine transform from `[0, 1]` into `[low, high]`.
+- Gaussian inputs use inverse-CDF transforms, with `truncnorm.ppf` when
+  truncation bounds are present.
 - `n_samples` is a minimum target, not an exact promise. Internally, `base_n`
   is promoted to the next power of 2 and exact duplicate Saltelli rows are
   removed.
@@ -203,6 +258,8 @@ Behavior and validation:
 
 - Writes `path.<format>` with the unique rows only.
 - Writes `path.json` with the `Problem` and Saltelli reconstruction metadata.
+- Mixed problems persist their declared input specs in JSON so `load()` can
+  rebuild uniform, Gaussian, and truncated Gaussian marginals.
 - Writes `path.npz` only when `expanded_to_unique` is not the identity mapping.
 - Raises `ValueError` for unsupported formats.
 - `xlsx` requires `openpyxl`; `parquet` requires `pyarrow`.
@@ -224,6 +281,8 @@ def load(path: str | Path, *, format: str = "csv") -> SamplingResult
 Validation and behavior:
 
 - Rebuilds `Problem`, `base_n`, `expanded_n_total`, and `expanded_to_unique`.
+- Loads both the new `input_specs` metadata and legacy uniform-only metadata
+  that stored only `bounds`.
 - The sample format is not auto-detected; pass the same `format` explicitly.
 - Raises `FileNotFoundError` if the metadata JSON is missing.
 - Raises `ValueError` for unsupported formats.
@@ -417,6 +476,8 @@ def analyze_hdmr(
 Validation and behavior:
 
 - `X.shape[1]` must match `problem.num_vars`.
+- `problem` must have finite uniform bounds; non-uniform specs are not
+  supported by HDMR in this version.
 - At least 300 rows are required or `ValueError` is raised.
 - `maxorder` must be 1, 2, or 3.
 - When `D == 2`, `maxorder` cannot exceed 2.

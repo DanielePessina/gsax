@@ -73,6 +73,8 @@ print(df.head())
 
 Follow these pages in order if you are learning the package:
 
+- [Non-Uniform Inputs](/examples/non-uniform-inputs) for mixed uniform,
+  Gaussian, and truncated Gaussian Sobol marginals.
 - [Save and Reload Samples](/examples/save-load) for persisting `SamplingResult`
   plus Saltelli reconstruction metadata.
 - [Bootstrap Confidence Intervals](/examples/bootstrap) for uncertainty bounds

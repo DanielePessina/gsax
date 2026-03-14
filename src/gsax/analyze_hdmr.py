@@ -27,6 +27,11 @@ from gsax.results_hdmr import HDMREmulator, HDMRResult
 
 def _normalize_X(X: Array, problem: Problem) -> Array:
     """Normalize X to [0, 1] using problem bounds."""
+    if problem.bounds is None:
+        raise ValueError(
+            "analyze_hdmr currently requires finite uniform bounds; "
+            "non-uniform input specs are not supported."
+        )
     bounds = jnp.array(problem.bounds)  # (D, 2)
     lo = bounds[:, 0]
     hi = bounds[:, 1]
@@ -217,6 +222,11 @@ def analyze_hdmr(
     N, D = X.shape
     if D != problem.num_vars:
         raise ValueError(f"X has {D} columns but problem defines {problem.num_vars} parameters")
+    if problem.has_non_uniform_inputs:
+        raise ValueError(
+            "analyze_hdmr currently requires finite uniform bounds; "
+            "non-uniform input specs are not supported."
+        )
     if N < 300:
         raise ValueError(f"Need at least 300 samples, got {N}")
     if maxorder not in (1, 2, 3):

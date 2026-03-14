@@ -23,3 +23,4 @@ Run type checking with ty on all new code. run via uv run ty only on the edited 
 • If the user says to use an open `tmux` session, inject commands into that live session or pane directly rather than creating a detached window or separate exec session.
 • `ty` must be invoked with a subcommand. Use `uv run ty check <path>` for package or file typechecking, not `uv run ty <path>`.
 • If the user says to “ignore” a typing issue in this context, confirm whether they mean “leave it unresolved” or “fix it by adding the proper guard/assertion.” Do not assume they want the diagnostic left in place.
+• For `gsax` input-distribution extensions, prefer `TypedDict` parameter specs in `Problem.from_dict(...)` over runtime input-class hierarchies. Gaussian specs may include optional `low` and/or `high` truncation bounds, while `mean` and `variance` still describe the parent Gaussian before truncation.
