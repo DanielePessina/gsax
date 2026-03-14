@@ -18,6 +18,7 @@ SECTIONS = {
     "guide": ["getting-started", "methods", "benchmarks"],
     "examples": [
         "basic",
+        "non-uniform-inputs",
         "save-load",
         "bootstrap",
         "multi-output",
@@ -69,11 +70,17 @@ def _check_section(base: str, section: str, slugs: list[str]) -> list[str]:
 
         if actual_prev != expected_prev:
             failures.append(
-                f"{section}/{slug}.html prev mismatch: expected {expected_prev!r}, got {actual_prev!r}"
+                (
+                    f"{section}/{slug}.html prev mismatch: "
+                    f"expected {expected_prev!r}, got {actual_prev!r}"
+                )
             )
         if actual_next != expected_next:
             failures.append(
-                f"{section}/{slug}.html next mismatch: expected {expected_next!r}, got {actual_next!r}"
+                (
+                    f"{section}/{slug}.html next mismatch: "
+                    f"expected {expected_next!r}, got {actual_next!r}"
+                )
             )
     return failures
 
