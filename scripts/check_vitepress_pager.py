@@ -7,7 +7,6 @@ import re
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "docs" / ".vitepress" / "dist"
 CONFIG = ROOT / "docs" / ".vitepress" / "config.ts"
@@ -51,7 +50,9 @@ def _check_section(base: str, section: str, slugs: list[str]) -> list[str]:
             continue
 
         content = html_path.read_text(encoding="utf-8")
-        pager_links = {match.group("kind"): match.group("href") for match in PAGER_RE.finditer(content)}
+        pager_links = {
+            match.group("kind"): match.group("href") for match in PAGER_RE.finditer(content)
+        }
         page_href = _expected_href(base, section, slug)
 
         for kind, href in pager_links.items():
@@ -59,7 +60,9 @@ def _check_section(base: str, section: str, slugs: list[str]) -> list[str]:
                 failures.append(f"{section}/{slug}.html has a self-referential {kind} link")
 
         expected_prev = None if index == 0 else _expected_href(base, section, slugs[index - 1])
-        expected_next = None if index == len(slugs) - 1 else _expected_href(base, section, slugs[index + 1])
+        expected_next = (
+            None if index == len(slugs) - 1 else _expected_href(base, section, slugs[index + 1])
+        )
 
         actual_prev = pager_links.get("prev")
         actual_next = pager_links.get("next")

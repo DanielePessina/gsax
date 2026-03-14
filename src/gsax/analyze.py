@@ -152,8 +152,7 @@ def _warn_zero_variance_slices(
 
     if output_names is not None and len(output_names) != K:
         raise ValueError(
-            f"len(output_names)={len(output_names)} does not match "
-            f"number of outputs K={K}"
+            f"len(output_names)={len(output_names)} does not match number of outputs K={K}"
         )
 
     def _fmt_k(k: int) -> str:
@@ -171,10 +170,7 @@ def _warn_zero_variance_slices(
 
     if n_outputs == 1:
         if output_names is not None and len(output_names) == 1:
-            msg = (
-                f"gsax: output '{output_names[0]}' has zero variance "
-                "— all indices will be NaN"
-            )
+            msg = f"gsax: output '{output_names[0]}' has zero variance — all indices will be NaN"
         else:
             msg = "gsax: output has zero variance — all indices will be NaN"
         warnings.warn(msg, stacklevel=2)
