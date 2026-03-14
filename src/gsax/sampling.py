@@ -20,9 +20,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm, truncnorm
 from scipy.stats.qmc import Sobol
 
-from gsax.problem import Problem
+from gsax.problem import Problem, _normalized_input_to_dict
 
 _SAMPLE_FORMATS = {"csv", "txt", "xlsx", "parquet", "pkl"}
 
@@ -33,7 +34,8 @@ class SamplingResult:
 
     Attributes:
         samples: Unique rows to evaluate with the user's model. Shape
-            ``(n_total, D)`` after scaling to the problem bounds.
+            ``(n_total, D)`` after transforming each Sobol marginal into the
+            problem's declared input distribution.
         sample_ids: Stable integer identifiers aligned 1:1 with ``samples``.
             Useful for joining model outputs back onto the sampling table.
         expanded_n_total: Row count of the full expanded Saltelli layout before
@@ -46,7 +48,7 @@ class SamplingResult:
         n_params: Number of problem dimensions ``D``.
         calc_second_order: Whether the expanded design includes BA blocks for
             second-order Sobol indices.
-        problem: Problem definition used to scale the samples.
+        problem: Problem definition used to transform the samples.
     """
 
     samples: np.ndarray  # shape (n_unique, D), scaled to bounds
@@ -111,7 +113,12 @@ class SamplingResult:
             "gsax_version": _pkg_version("gsax"),
             "problem": {
                 "names": list(self.problem.names),
-                "bounds": [list(b) for b in self.problem.bounds],
+                "bounds": [list(b) for b in self.problem.bounds]
+                if self.problem.bounds is not None
+                else None,
+                "input_specs": [
+                    _normalized_input_to_dict(spec) for spec in self.problem._input_specs
+                ],
                 "output_names": list(self.problem.output_names)
                 if self.problem.output_names is not None
                 else None,
@@ -144,7 +151,7 @@ def _saltelli_step(n_params: int, calc_second_order: bool) -> int:
 
 
 def _build_expanded_samples(
-    problem: Problem,
+    n_params: int,
     base_n: int,
     *,
     calc_second_order: bool,
@@ -156,7 +163,7 @@ def _build_expanded_samples(
     The returned matrix still includes exact duplicate rows when the Saltelli
     construction collapses in low dimensions. Deduplication happens later.
     """
-    D = problem.num_vars
+    D = n_params
     sampler = Sobol(d=2 * D, scramble=scramble, seed=seed)
     base = sampler.random(base_n)
 
@@ -180,11 +187,51 @@ def _build_expanded_samples(
                 rows.append(BA_j)
         rows.append(B[i])
 
-    samples_unit = np.array(rows)
-    bounds = np.array(problem.bounds)
-    low, high = bounds[:, 0], bounds[:, 1]
-    # Scale from the unit hypercube into the user-specified parameter bounds.
-    return samples_unit * (high - low) + low
+    return np.array(rows)
+
+
+def _transform_uniform(unit_values: np.ndarray, low: float, high: float) -> np.ndarray:
+    """Affine-map unit-interval samples into a finite uniform range."""
+    return unit_values * (high - low) + low
+
+
+def _transform_gaussian(
+    unit_values: np.ndarray,
+    mean: float,
+    variance: float,
+    *,
+    low: float | None,
+    high: float | None,
+) -> np.ndarray:
+    """Transform unit-interval samples into Gaussian or truncated Gaussian values."""
+    clipped = np.clip(unit_values, 1e-12, 1.0 - 1e-12)
+    std = math.sqrt(variance)
+    if low is None and high is None:
+        return mean + std * norm.ppf(clipped)
+
+    a = -np.inf if low is None else (low - mean) / std
+    b = np.inf if high is None else (high - mean) / std
+    return truncnorm.ppf(clipped, a=a, b=b, loc=mean, scale=std)
+
+
+def _transform_samples(problem: Problem, samples_unit: np.ndarray) -> np.ndarray:
+    """Transform unit-cube Sobol samples into the problem's declared marginals."""
+    transformed = np.empty_like(samples_unit, dtype=np.float64)
+
+    for idx, spec in enumerate(problem._input_specs):
+        dist, first, second, low, high = spec
+        if dist == "uniform":
+            transformed[:, idx] = _transform_uniform(samples_unit[:, idx], first, second)
+        else:
+            transformed[:, idx] = _transform_gaussian(
+                samples_unit[:, idx],
+                first,
+                second,
+                low=low,
+                high=high,
+            )
+
+    return transformed
 
 
 def _stable_unique_rows(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -283,13 +330,14 @@ def sample(
     base_n = _next_power_of_2(math.ceil(target_n / step))
 
     while True:
-        expanded_samples = _build_expanded_samples(
-            problem,
+        expanded_samples_unit = _build_expanded_samples(
+            D,
             base_n,
             calc_second_order=calc_second_order,
             scramble=scramble,
             seed=seed,
         )
+        expanded_samples = _transform_samples(problem, expanded_samples_unit)
         unique_samples, expanded_to_unique = _stable_unique_rows(expanded_samples)
         # Low-dimensional Saltelli designs can contain exact duplicate rows.
         # Keep increasing base_n until the user-facing matrix is large enough.
@@ -404,15 +452,22 @@ def load(path: str | Path, *, format: str = "csv") -> SamplingResult:
     # Reconstruct Problem
     prob_meta = meta["problem"]
     output_names = (
-        tuple(prob_meta["output_names"])
-        if prob_meta["output_names"] is not None
-        else None
+        tuple(prob_meta["output_names"]) if prob_meta["output_names"] is not None else None
     )
-    problem = Problem(
-        names=tuple(prob_meta["names"]),
-        bounds=tuple(tuple(b) for b in prob_meta["bounds"]),
-        output_names=output_names,
-    )
+    if "input_specs" in prob_meta and prob_meta["input_specs"] is not None:
+        from gsax.problem import _normalize_input_spec
+
+        problem = Problem._from_normalized_inputs(
+            names=tuple(prob_meta["names"]),
+            input_specs=tuple(_normalize_input_spec(spec) for spec in prob_meta["input_specs"]),
+            output_names=output_names,
+        )
+    else:
+        problem = Problem(
+            names=tuple(prob_meta["names"]),
+            bounds=tuple(tuple(b) for b in prob_meta["bounds"]),
+            output_names=output_names,
+        )
 
     # Read samples
     sample_path = stem.with_suffix(f".{format}")
@@ -423,15 +478,11 @@ def load(path: str | Path, *, format: str = "csv") -> SamplingResult:
 
     # Reconstruct expanded_to_unique
     if meta["identity_mapping"]:
-        expanded_to_unique = np.arange(
-            meta["expanded_n_total"], dtype=np.int64
-        )
+        expanded_to_unique = np.arange(meta["expanded_n_total"], dtype=np.int64)
     else:
         npz_path = stem.with_suffix(".npz")
         if not npz_path.exists():
-            raise FileNotFoundError(
-                f"Expected mapping file not found: {npz_path}"
-            )
+            raise FileNotFoundError(f"Expected mapping file not found: {npz_path}")
         expanded_to_unique = np.load(npz_path)["expanded_to_unique"]
 
     return SamplingResult(

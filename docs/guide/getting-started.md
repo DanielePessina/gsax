@@ -55,6 +55,10 @@ problem = Problem.from_dict({
 })
 ```
 
+For mixed Sobol inputs, `Problem.from_dict(...)` also accepts tagged
+distribution specs. See [Non-Uniform Inputs](/examples/non-uniform-inputs) for
+the full `TypedDict` form and the Gaussian truncation rules.
+
 ## Save and Reuse Samples
 
 `gsax.sample()` returns a `SamplingResult` that you can persist and reload
@@ -80,6 +84,7 @@ next problem:
 
 - [Methods](/guide/methods) -- compare Sobol sampling and RS-HDMR before choosing a workflow
 - [Basic Example (Ishigami)](/examples/basic) -- run the canonical scalar-output Sobol analysis end to end
+- [Non-Uniform Inputs](/examples/non-uniform-inputs) -- mix uniform, Gaussian, and truncated Gaussian Sobol marginals in one `Problem`
 - [Save and Reload Samples](/examples/save-load) -- persist a `SamplingResult` and reuse it across runs
 - [Bootstrap CIs](/examples/bootstrap) -- quantify uncertainty with confidence intervals around `S1`, `ST`, and `S2`
 - [Multi-Output & Time-Series](/examples/multi-output) -- move from scalar outputs to `(N, K)` and `(N, T, K)` analyses

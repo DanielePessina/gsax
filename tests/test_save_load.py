@@ -8,13 +8,13 @@ import numpy as np
 import pytest
 
 import gsax
-from gsax.problem import Problem
+from gsax.problem import GaussianInputSpec, Problem
 from gsax.sampling import SamplingResult, load
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def low_d_problem():
@@ -25,9 +25,7 @@ def low_d_problem():
 @pytest.fixture
 def high_d_problem():
     """6-D problem — unlikely to produce duplicate rows."""
-    return Problem.from_dict({
-        f"x{i}": (0.0, 1.0) for i in range(1, 7)
-    })
+    return Problem.from_dict({f"x{i}": (0.0, 1.0) for i in range(1, 7)})
 
 
 @pytest.fixture
@@ -39,9 +37,7 @@ def sr_with_duplicates(low_d_problem):
 @pytest.fixture
 def sr_identity(high_d_problem):
     """SamplingResult where expanded_to_unique IS an identity mapping."""
-    sr = gsax.sample(
-        high_d_problem, 16, calc_second_order=False, seed=42, verbose=False
-    )
+    sr = gsax.sample(high_d_problem, 16, calc_second_order=False, seed=42, verbose=False)
     # Verify this fixture actually has an identity mapping
     assert np.array_equal(
         sr.expanded_to_unique,
@@ -53,6 +49,7 @@ def sr_identity(high_d_problem):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _assert_sr_equal(a: SamplingResult, b: SamplingResult) -> None:
     """Assert two SamplingResults are semantically equal."""
@@ -71,6 +68,7 @@ def _assert_sr_equal(a: SamplingResult, b: SamplingResult) -> None:
 # ---------------------------------------------------------------------------
 # Round-trip tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("fmt", ["csv", "txt", "pkl"])
 def test_round_trip(sr_with_duplicates, tmp_path, fmt):
@@ -91,6 +89,7 @@ def test_round_trip_identity(sr_identity, tmp_path):
 # Identity mapping optimization
 # ---------------------------------------------------------------------------
 
+
 def test_identity_skips_npz(sr_identity, tmp_path):
     stem = tmp_path / "experiment"
     sr_identity.save(stem, format="csv")
@@ -109,6 +108,7 @@ def test_non_identity_writes_npz(sr_with_duplicates, tmp_path):
 # output_names round-trip
 # ---------------------------------------------------------------------------
 
+
 def test_output_names_preserved(tmp_path):
     prob = Problem(
         names=("a", "b"),
@@ -122,9 +122,50 @@ def test_output_names_preserved(tmp_path):
     assert loaded.problem.output_names == ("y1", "y2")
 
 
+def test_mixed_input_specs_round_trip(tmp_path):
+    prob = Problem.from_dict(
+        {
+            "uniform": (0.0, 1.0),
+            "gaussian": GaussianInputSpec(dist="gaussian", mean=0.0, variance=1.0),
+            "truncated": GaussianInputSpec(
+                dist="gaussian",
+                mean=1.0,
+                variance=4.0,
+                low=0.0,
+                high=3.0,
+            ),
+        }
+    )
+    sr = gsax.sample(prob, 32, calc_second_order=False, seed=0, verbose=False)
+    stem = tmp_path / "mixed"
+    sr.save(stem, format="csv")
+    loaded = load(stem, format="csv")
+    _assert_sr_equal(sr, loaded)
+    assert loaded.problem.bounds is None
+    assert loaded.problem.has_non_uniform_inputs is True
+
+
+def test_load_remains_backward_compatible_with_legacy_bounds_metadata(tmp_path):
+    prob = Problem.from_dict({"x1": (0.0, 1.0), "x2": (1.0, 2.0)})
+    sr = gsax.sample(prob, 16, calc_second_order=False, seed=0, verbose=False)
+    stem = tmp_path / "legacy"
+    sr.save(stem, format="csv")
+
+    import json
+
+    json_path = stem.with_suffix(".json")
+    meta = json.loads(json_path.read_text())
+    del meta["problem"]["input_specs"]
+    json_path.write_text(json.dumps(meta))
+
+    loaded = load(stem, format="csv")
+    _assert_sr_equal(sr, loaded)
+
+
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
+
 
 def test_missing_metadata(tmp_path):
     with pytest.raises(FileNotFoundError, match="Metadata file not found"):
@@ -156,6 +197,7 @@ def test_xlsx_read_import_error(sr_with_duplicates, tmp_path):
     sr_with_duplicates.save(stem, format="csv")
     # Create a fake json that says xlsx format
     import json
+
     json_path = stem.with_suffix(".json")
     meta = json.loads(json_path.read_text())
     meta["sample_format"] = "xlsx"
@@ -171,6 +213,7 @@ def test_parquet_read_import_error(sr_with_duplicates, tmp_path):
     stem = tmp_path / "experiment"
     sr_with_duplicates.save(stem, format="csv")
     import json
+
     json_path = stem.with_suffix(".json")
     meta = json.loads(json_path.read_text())
     meta["sample_format"] = "parquet"

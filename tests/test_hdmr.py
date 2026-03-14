@@ -12,6 +12,7 @@ from gsax.benchmarks.ishigami import (
     PROBLEM,
     evaluate,
 )
+from gsax.problem import GaussianInputSpec
 
 
 def _assert_matches_analytical_s1_st(S1: np.ndarray, ST: np.ndarray) -> None:
@@ -206,6 +207,28 @@ def test_chunk_size_regression(ishigami_data):
         rtol=1e-6,
         atol=1e-6,
     )
+    assert result_default.emulator is not None
+    assert result_chunked.emulator is not None
+    np.testing.assert_allclose(
+        result_default.emulator["C1"], result_chunked.emulator["C1"], rtol=1e-4, atol=5e-3
+    )
+    assert result_default.emulator["C2"] is not None
+    assert result_chunked.emulator["C2"] is not None
+    np.testing.assert_allclose(
+        np.asarray(result_default.emulator["C2"]),
+        np.asarray(result_chunked.emulator["C2"]),
+        rtol=1e-4,
+        atol=2e-3,
+    )
+    np.testing.assert_allclose(
+        result_default.emulator["f0"], result_chunked.emulator["f0"], rtol=1e-4, atol=5e-3
+    )
+    np.testing.assert_allclose(
+        emulate_hdmr(result_default, X),
+        emulate_hdmr(result_chunked, X),
+        rtol=1e-4,
+        atol=3e-3,
+    )
 
 
 def test_chunk_size_regression_3d(ishigami_data):
@@ -250,28 +273,21 @@ def test_chunk_size_regression_3d(ishigami_data):
         rtol=1e-6,
         atol=1e-6,
     )
-    assert result_default.emulator is not None
-    assert result_chunked.emulator is not None
-    np.testing.assert_allclose(
-        result_default.emulator["C1"], result_chunked.emulator["C1"], rtol=1e-4, atol=5e-3
+
+
+def test_hdmr_rejects_non_uniform_problem_specs():
+    problem = PROBLEM.from_dict(
+        {
+            "x1": (0.0, 1.0),
+            "x2": GaussianInputSpec(dist="gaussian", mean=0.0, variance=1.0),
+            "x3": (0.0, 1.0),
+        }
     )
-    assert result_default.emulator["C2"] is not None
-    assert result_chunked.emulator["C2"] is not None
-    np.testing.assert_allclose(
-        np.asarray(result_default.emulator["C2"]),
-        np.asarray(result_chunked.emulator["C2"]),
-        rtol=1e-4,
-        atol=2e-3,
-    )
-    np.testing.assert_allclose(
-        result_default.emulator["f0"], result_chunked.emulator["f0"], rtol=1e-4, atol=5e-3
-    )
-    np.testing.assert_allclose(
-        emulate_hdmr(result_default, X),
-        emulate_hdmr(result_chunked, X),
-        rtol=1e-4,
-        atol=3e-3,
-    )
+    X = jnp.ones((300, 3))
+    Y = jnp.ones(300)
+
+    with pytest.raises(ValueError, match="finite uniform bounds"):
+        analyze_hdmr(problem, X, Y)
 
 
 def test_repeated_calls_identical(ishigami_data):
