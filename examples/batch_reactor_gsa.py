@@ -1,15 +1,15 @@
-"""CSTR mechanistic model — Sobol global sensitivity analysis with gsax.
+"""Batch reactor mechanistic model — Sobol global sensitivity analysis with gsax.
 
-Walks through Sobol global sensitivity analysis on a continuous stirred-tank
-reactor running a first-order liquid-phase reaction A -> B. The rate constant
-k(T, pH) combines a centred Arrhenius temperature dependence with a Hill-type
-pH saturation curve, and the inlet concentration Ca0 enters linearly through
-the mass balance. The mechanistic model is treated as already fitted: the
-notebook is about variance attribution across the operating envelope, not
-parameter estimation.
+Walks through Sobol global sensitivity analysis on a batch reactor running a
+first-order liquid-phase reaction A -> B. The rate constant k(T, pH) combines
+a centred Arrhenius temperature dependence with a Hill-type pH saturation
+curve, and the inlet concentration Ca0 enters linearly through the mass
+balance. The mechanistic model is treated as already fitted: the notebook is
+about variance attribution across the operating envelope, not parameter
+estimation.
 
-Run interactively: ``uv run marimo edit examples/cstr_gsa.py``
-Run as script:     ``uv run python examples/cstr_gsa.py``
+Run interactively: ``uv run marimo edit examples/batch_reactor_gsa.py``
+Run as script:     ``uv run python examples/batch_reactor_gsa.py``
 """
 
 # ruff: noqa: F722
@@ -23,19 +23,19 @@ app = marimo.App(width="medium")
 @app.cell(hide_code=True)
 def _intro(mo):
     mo.md(r"""
-    # CSTR sensitivity analysis with **gsax**
+    # Batch reactor sensitivity analysis with **gsax**
 
-    A continuous stirred-tank reactor running a first-order liquid-phase
-    reaction $A \to B$. The rate constant $k(T, \mathrm{pH})$ combines a
-    centred Arrhenius temperature dependence with a Hill-type pH
-    saturation curve, and the inlet concentration $C_{A,0}$ feeds the
-    mass balance directly. We treat the mechanistic model as already
+    A batch reactor running a first-order liquid-phase reaction
+    $A \to B$. The rate constant $k(T, \mathrm{pH})$ combines a centred
+    Arrhenius temperature dependence with a Hill-type pH saturation
+    curve, and the inlet concentration $C_{A,0}$ feeds the mass
+    balance directly. We treat the mechanistic model as already
     fitted — the notebook asks the classical global-sensitivity question
     instead: across the operating envelope, how much of the variance in
     the outlet concentration is explained by each input, and which pairs
     interact?
 
-    The CSTR mass balance for the reactant is
+    The batch reactor mass balance for the reactant is
 
     $$
     \frac{dC_A}{dt} \;=\; \frac{1}{\tau}\,(C_{A,0} - C_A)
@@ -117,14 +117,14 @@ def _model(jnp):
         sat = K_BASELINE + K_AMPLITUDE / (1.0 + (pH / PH50) ** HILL)
         return sat * arrhenius
 
-    def cstr_trajectory(Ca0, temperature_C, pH, ts):
-        """Closed-form CSTR concentration starting from Ca(0) = 0."""
+    def batch_reactor_trajectory(Ca0, temperature_C, pH, ts):
+        """Closed-form batch reactor concentration starting from Ca(0) = 0."""
         k = k_rate(temperature_C, pH)
         Ca_ss = Ca0 / (1.0 + k * TAU)
         decay = jnp.exp(-(1.0 / TAU + k) * ts)
         return Ca_ss * (1.0 - decay)
 
-    return (cstr_trajectory,)
+    return (batch_reactor_trajectory,)
 
 
 @app.cell(hide_code=True)
@@ -171,7 +171,7 @@ def _problem(gsax):
 
 
 @app.cell
-def _evaluate(cstr_trajectory, jnp, np, sampling_result):
+def _evaluate(batch_reactor_trajectory, jnp, np, sampling_result):
     ts = jnp.asarray(np.linspace(0.05, 6.0, 40))
 
     X = jnp.asarray(sampling_result.samples)
@@ -179,7 +179,7 @@ def _evaluate(cstr_trajectory, jnp, np, sampling_result):
     temperature_C = X[:, 1:2]
     pH = X[:, 2:3]
 
-    Y = cstr_trajectory(Ca0, temperature_C, pH, ts[None, :])
+    Y = batch_reactor_trajectory(Ca0, temperature_C, pH, ts[None, :])
     Y = Y[..., None]
     print(f"output shape: {Y.shape}  (N, T, K)")
     return Y, ts
@@ -214,7 +214,7 @@ def _trajectory_plot(Y, np, plt, ts):
         )
     ax_traj.set_xlabel("t")
     ax_traj.set_ylabel("Ca")
-    ax_traj.set_title("CSTR concentration trajectories — 24 sampled inputs")
+    ax_traj.set_title("Batch reactor concentration trajectories — 24 sampled inputs")
     ax_traj.grid(alpha=0.3)
     fig_traj.tight_layout()
     fig_traj

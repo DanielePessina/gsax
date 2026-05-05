@@ -30,7 +30,7 @@ export default defineConfig({
         { text: 'xarray Output', link: '/examples/xarray' },
         { text: 'RS-HDMR', link: '/examples/hdmr' },
         { text: 'Advanced Workflow', link: '/examples/advanced-workflow' },
-        { text: 'CSTR Reactor (notebook)', link: '/examples/cstr' },
+        { text: 'Batch Reactor (notebook)', link: '/examples/batch_reactor' },
       ],
       '/api/': [
         { text: 'API Reference', link: '/api/' },

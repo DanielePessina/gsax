@@ -91,5 +91,5 @@ next problem:
 - [xarray Output](/examples/xarray) -- export labeled datasets with named parameters, outputs, and time coordinates
 - [RS-HDMR](/examples/hdmr) -- switch to surrogate-based analysis when you already have arbitrary `(X, Y)` pairs
 - [Advanced Workflow](/examples/advanced-workflow) -- follow the full custom-model path with named outputs, Sobol, HDMR, emulation, and `to_dataset()`
-- [CSTR Reactor (notebook)](/examples/cstr) -- a self-contained walkthrough of Sobol GSA on a continuous stirred-tank reactor with three uniform inputs $(C_{A,0}, T, \mathrm{pH})$, including bootstrap CIs and time-resolved $S_1$ / $S_T$ / $S_{ij}$
+- [Batch Reactor (notebook)](/examples/batch_reactor) -- a self-contained walkthrough of Sobol GSA on a batch reactor with three uniform inputs $(C_{A,0}, T, \mathrm{pH})$, including bootstrap CIs and time-resolved $S_1$ / $S_T$ / $S_{ij}$
 - [API Reference](/api/) -- browse the single-page reference for signatures, shape contracts, and result objects

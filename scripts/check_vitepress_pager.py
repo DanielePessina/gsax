@@ -25,7 +25,7 @@ SECTIONS = {
         "xarray",
         "hdmr",
         "advanced-workflow",
-        "cstr",
+        "batch_reactor",
     ],
 }
 

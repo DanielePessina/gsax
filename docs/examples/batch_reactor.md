@@ -1,7 +1,7 @@
-# CSTR Reactor (marimo notebook)
+# Batch Reactor (marimo notebook)
 
 A self-contained walkthrough of Sobol global sensitivity analysis on a
-continuous stirred-tank reactor running a first-order liquid-phase reaction
+batch reactor running a first-order liquid-phase reaction
 $A \to B$. The rate constant $k(T,\mathrm{pH})$ combines an Arrhenius
 temperature dependence with a Hill-type pH saturation curve, and the inlet
 concentration $C_{A,0}$ feeds the mass balance directly. The mechanistic
@@ -9,12 +9,12 @@ model is treated as already fitted — the example focuses on variance
 attribution, not estimation.
 
 The notebook source lives at
-[`examples/cstr_gsa.py`](https://github.com/danielepessina/gsax/blob/master/examples/cstr_gsa.py).
-Run it interactively with `uv run marimo edit examples/cstr_gsa.py`, or read
+[`examples/batch_reactor_gsa.py`](https://github.com/danielepessina/gsax/blob/master/examples/batch_reactor_gsa.py).
+Run it interactively with `uv run marimo edit examples/batch_reactor_gsa.py`, or read
 the rendered output below.
 
 <iframe
-  src="/gsax/notebooks/cstr_gsa.html"
+  src="/gsax/notebooks/batch_reactor_gsa.html"
   style="width: 100%; height: 90vh; border: 1px solid var(--vp-c-divider); border-radius: 6px;"
   loading="lazy"
 ></iframe>
@@ -23,7 +23,7 @@ the rendered output below.
 
 - A three-input Sobol problem ($C_{A,0}$, $T$, $\mathrm{pH}$) defined with
   `gsax.Problem.from_dict(...)` and uniform marginals.
-- A closed-form CSTR start-up trajectory used as the model — the kind of cheap
+- A closed-form batch reactor start-up trajectory used as the model — the kind of cheap
   surrogate you would plug a fitted mechanistic predictor into.
 - A single `gsax.analyze(..., num_resamples=200, key=...)` call to obtain
   $S_1$, $S_T$, $S_{ij}$ along with bootstrap 95 % confidence intervals.
