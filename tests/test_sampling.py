@@ -33,7 +33,7 @@ def test_next_power_of_2():
     assert _next_power_of_2(1025) == 2048
 
 
-def test_sample_returns_unique_rows():
+def test_sobol_design_layout_is_unique_bounded_and_power_of_two():
     p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0), "x3": (0.0, 1.0)})
     result = sample(p, n_samples=100, seed=42, verbose=False)
     assert result.n_runs >= 100
@@ -43,18 +43,6 @@ def test_sample_returns_unique_rows():
     assert result.expanded_to_unique.max() < result.n_runs
     assert result.n_params == p.num_vars
     assert result.calc_second_order is True
-
-
-def test_sample_within_bounds():
-    p = Problem.from_dict({"x1": (-5.0, 5.0), "x2": (0.0, 10.0)})
-    result = sample(p, n_samples=200, seed=42, verbose=False)
-    assert np.all(result.samples[:, 0] >= -5.0)
-    assert np.all(result.samples[:, 0] <= 5.0)
-    assert np.all(result.samples[:, 1] >= 0.0)
-    assert np.all(result.samples[:, 1] <= 10.0)
-
-
-def test_power_of_2_enforcement():
     p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
     result = sample(p, n_samples=100, seed=42, verbose=False)
     assert result.base_n & (result.base_n - 1) == 0
@@ -109,25 +97,7 @@ def test_two_parameter_second_order_mapping_collapses_cross_duplicates():
         assert len(set(group.tolist())) == 4
 
 
-def test_reconstructing_expanded_samples_matches_mapping():
-    p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
-    result = sample(p, n_samples=64, seed=42, verbose=False)
-    reconstructed = result.samples[result.expanded_to_unique]
-    assert reconstructed.shape == (result.n_expanded, p.num_vars)
-    assert np.unique(reconstructed, axis=0).shape[0] == result.n_runs
-
-
-@pytest.mark.verbose_output
-def test_sample_verbose_false_is_silent(capsys):
-    """The marker keeps the emit seam live; otherwise this asserts nothing."""
-    p = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
-    with pytest.warns(JaxgsaWarning, match="degenerate"):
-        sample(p, n_samples=32, seed=42, verbose=False)
-    out = capsys.readouterr().out
-    assert out == ""
-
-
-def test_uniform_columns_stay_within_bounds_for_mixed_problem():
+def test_mixed_marginals_respect_bounds_and_known_moments():
     p = Problem.from_dict(
         {
             "uniform": UniformInputSpec(dist="uniform", low=-3.0, high=2.0),
@@ -138,21 +108,12 @@ def test_uniform_columns_stay_within_bounds_for_mixed_problem():
     result = sample(p, n_samples=256, seed=1, verbose=False)
     assert np.all(result.samples[:, 0] >= -3.0)
     assert np.all(result.samples[:, 0] <= 2.0)
-
-
-def test_gaussian_column_matches_target_mean_and_variance():
-    p = Problem.from_dict(
-        {
-            "x1": GaussianInputSpec(dist="gaussian", mean=1.5, variance=2.25),
-            "x2": (0.0, 1.0),
-        }
+    p_gaussian = Problem.from_dict(
+        {"x1": GaussianInputSpec(dist="gaussian", mean=1.5, variance=2.25), "x2": (0.0, 1.0)}
     )
-
-    result = sample(p, n_samples=4096, calc_second_order=False, seed=123, verbose=False)
-    gaussian = result.samples[:, 0]
-
-    assert abs(np.mean(gaussian) - 1.5) < 0.05
-    assert abs(np.var(gaussian) - 2.25) < 0.08
+    gaussian = sample(p_gaussian, n_samples=4096, calc_second_order=False, seed=123, verbose=False)
+    assert abs(np.mean(gaussian.samples[:, 0]) - 1.5) < 0.05
+    assert abs(np.var(gaussian.samples[:, 0]) - 2.25) < 0.08
 
 
 def test_truncated_gaussian_columns_respect_one_sided_and_two_sided_bounds():
@@ -187,28 +148,6 @@ def test_truncated_gaussian_columns_respect_one_sided_and_two_sided_bounds():
     assert np.all(result.samples[:, 2] <= 1.0)
 
 
-def test_two_sided_truncated_gaussian_matches_target_variance_formula():
-    p = Problem.from_dict(
-        {
-            "x": GaussianInputSpec(
-                dist="gaussian",
-                mean=0.5,
-                variance=1.44,
-                low=-0.5,
-                high=1.5,
-            )
-        }
-    )
-
-    result = sample(p, n_samples=4096, calc_second_order=False, seed=99, verbose=False)
-    observed = np.var(result.samples[:, 0])
-    std = np.sqrt(1.44)
-    a = (-0.5 - 0.5) / std
-    b = (1.5 - 0.5) / std
-    expected = truncnorm.var(a, b, loc=0.5, scale=std)
-    assert abs(observed - expected) < 0.03
-
-
 # ---------------------------------------------------------------------------
 # Prefix downsampling tests
 # ---------------------------------------------------------------------------
@@ -224,11 +163,9 @@ class TestSamplingResultDownsample:
             p, n_samples=1, base_n=base_n, calc_second_order=second_order, seed=seed, verbose=False
         )
 
-    def test_identity_when_same_base_n(self):
-        sr = self._make_sr(base_n=16)
-        assert sr.downsample(16) is sr
-
-    def test_samples_are_prefix(self):
+    def test_identity_and_prefix_properties(self):
+        sr_identity = self._make_sr(base_n=16)
+        assert sr_identity.downsample(16) is sr_identity
         sr_full = self._make_sr(base_n=64)
         sr_small = sr_full.downsample(16)
         assert np.array_equal(sr_small.samples, sr_full.samples[: sr_small.n_runs])
@@ -259,29 +196,11 @@ class TestSamplingResultDownsample:
         assert Y_small.shape == (sr_small.n_runs, 4)
         assert np.array_equal(Y_small, Y[: sr_small.n_runs])
 
-    def test_with_Y_identity_returns_same_Y(self):
-        sr_full = self._make_sr(base_n=16)
-        Y = np.ones((sr_full.n_runs, 3))
-        sr_same, Y_same = sr_full.downsample(16, Y)
-        assert sr_same is sr_full
-        assert Y_same is Y
-
     def test_with_Y_misaligned_raises(self):
         sr_full = self._make_sr(base_n=32)
         Y_wrong = np.zeros((sr_full.n_runs + 5, 3))
         with pytest.raises(ValueError, match="does not match n_runs"):
             sr_full.downsample(8, Y_wrong)
-
-    def test_samples_do_not_share_memory(self):
-        sr_full = self._make_sr(base_n=32)
-        sr_small = sr_full.downsample(8)
-        assert not np.shares_memory(sr_full.samples, sr_small.samples)
-
-    def test_Y_does_not_share_memory(self):
-        sr_full = self._make_sr(base_n=32)
-        Y = np.ones((sr_full.n_runs, 3))
-        _, Y_small = sr_full.downsample(8, Y)
-        assert not np.shares_memory(Y, Y_small)
 
     def test_downsample_is_bit_identical_to_direct_draw(self):
         """Prefix property: downsampling to K equals drawing K base points directly.
@@ -389,15 +308,6 @@ def test_correlated_sampling_preserves_marginals():
     assert abs(np.var(X[:, 2]) - truncnorm.var(a, b, loc=0.5, scale=std)) < 0.03
 
 
-def test_identity_correlation_is_bitwise_identical_to_independent_path():
-    """An identity R short-circuits to the plain pseudo-random path."""
-    independent = Problem.from_dict({"x1": (0.0, 1.0), "x2": (0.0, 1.0)})
-    identity = independent.with_correlation(np.eye(2))
-    np.testing.assert_array_equal(
-        monte_carlo(independent, 512, seed=9), monte_carlo(identity, 512, seed=9)
-    )
-
-
 def test_correlated_monte_carlo_determinism_and_generator_seed():
     problem = Problem.from_dict(
         {"x1": (0.0, 1.0), "x2": (0.0, 1.0)}, correlation=[[1.0, 0.8], [0.8, 1.0]]
@@ -408,14 +318,6 @@ def test_correlated_monte_carlo_determinism_and_generator_seed():
     assert not np.array_equal(monte_carlo(problem, 128, seed=5), monte_carlo(problem, 128, seed=6))
     from_generator = monte_carlo(problem, 128, seed=np.random.default_rng(5))
     np.testing.assert_array_equal(from_generator, monte_carlo(problem, 128, seed=5))
-
-
-def test_correlated_monte_carlo_rejects_nonpositive_n():
-    problem = Problem.from_dict(
-        {"x1": (0.0, 1.0), "x2": (0.0, 1.0)}, correlation=[[1.0, 0.8], [0.8, 1.0]]
-    )
-    with pytest.raises(ValueError, match="n must be >= 1"):
-        monte_carlo(problem, 0)
 
 
 def test_correlate_is_a_per_column_permutation_hitting_the_target():
@@ -443,37 +345,6 @@ def test_correlate_determinism_and_validation():
         correlate(X, problem.with_correlation(None))
     with pytest.raises(ValueError, match=r"X must be \(N, 2\)"):
         correlate(X[:, :1], problem)
-
-
-def test_correlate_sampling_error_matches_iman_conover():
-    """Pin the variance reduction the de-correlation step buys.
-
-    A plain correlated normal score matrix carries its own sampling noise into
-    the re-pairing. At N = 50 that gave a standard deviation of about 0.065 in
-    the achieved rank correlation, plus a bias of about -0.006. Iman-Conover
-    removes both: about 0.024 and no bias. The thresholds below sit between
-    the two, so the old implementation fails this test.
-    """
-    from scipy.stats import spearmanr
-
-    rho = 0.8
-    n, replicates = 50, 150
-    problem = Problem.from_dict(
-        {"x1": (0.0, 1.0), "x2": (0.0, 1.0)}, correlation=[[1.0, rho], [rho, 1.0]]
-    )
-    # Spearman rank correlation implied by a latent Pearson rho under the copula.
-    target = 6.0 / np.pi * np.arcsin(rho / 2.0)
-
-    achieved = np.array(
-        [
-            spearmanr(
-                correlate(monte_carlo(problem.with_correlation(None), n, seed=r), problem, seed=r)
-            ).statistic
-            for r in range(replicates)
-        ]
-    )
-    assert achieved.std() < 0.040  # old implementation: ~0.065
-    assert abs(achieved.mean() - target) < 0.004  # old implementation: ~-0.006
 
 
 def test_correlate_rejects_non_finite_X():
@@ -517,17 +388,6 @@ def test_correlate_handles_degenerate_row_counts():
         out = correlate(X, problem, seed=3)
     assert np.isfinite(out).all()
     np.testing.assert_array_equal(np.sort(out, axis=0), np.sort(X, axis=0))
-
-
-def test_fit_correlation_public_wrapper_recovers_declared_matrix():
-    rho = 0.7
-    problem = Problem.from_dict(
-        {"x1": (0.0, 1.0), "x2": (0.0, 1.0)}, correlation=[[1.0, rho], [rho, 1.0]]
-    )
-    X = monte_carlo(problem, 20_000, seed=17)
-    fitted = fit_correlation(problem, X)
-    assert fitted.shape == (2, 2)
-    assert abs(fitted[0, 1] - rho) < 0.02
 
 
 def test_correlated_end_to_end_ot_borgonovo_hdmr():

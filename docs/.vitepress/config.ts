@@ -31,6 +31,7 @@ export default defineConfig({
         { text: 'Save and reload', link: '/examples/save-load' },
         { text: 'Bootstrap intervals', link: '/examples/bootstrap' },
         { text: 'Multi-output and time series', link: '/examples/multi-output' },
+        { text: 'Irregular output grids', link: '/examples/irregular-outputs' },
         { text: 'xarray output', link: '/examples/xarray' },
         { text: 'RS-HDMR', link: '/examples/hdmr' },
         { text: 'Screen first, then quantify', link: '/examples/advanced-workflow' },

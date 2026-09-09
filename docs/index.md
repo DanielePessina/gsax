@@ -20,8 +20,8 @@ features:
     details: Every method has analyze(). The design-based ones also have sample(). Results share one output contract and convert to labeled xarray with to_dataset().
   - title: Bring your own design, or your old runs
     details: Sobol, eFAST, Morris, and Kucherenko build the sample matrix for you. The other nine read indices off any (X, Y) pairs you already have, including a sweep you ran last year.
-  - title: Time series in one pass
-    details: Pass Y as (N,), (N, K), or (N, T, K). One compiled call returns indices for every timestep and output, so you can watch a ranking change along the trajectory instead of averaging it away.
+  - title: Regular or irregular outputs
+    details: Pass Y as (N,), (N, K), or (N, T, K), or give each output channel its own time grid for automatic bucketing. One result keeps every channel's coordinates intact.
   - title: Gradients are cheap
     details: DGSM bounds the total Sobol index from model derivatives, taken by JAX autodiff. It picks forward or reverse mode from the output shape, so time-series models do not pay T reverse passes.
   - title: Correlated inputs
