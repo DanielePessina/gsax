@@ -147,6 +147,12 @@ n_bootstrap > 0`; pass `key=jax.random.key(0)` so the interval is
 reproducible. See [Confidence intervals](/api/#confidence-intervals) for the
 `result.ci` record that comes back with them.
 
+All methods in the table except DGSM also infer bucketed irregular outputs.
+Pass a list or dict of `(times, values)` pairs when each output channel has its
+own time grid; jaxgsa analyzes one channel at a time and preserves those grids
+in the returned result wrapper. DGSM needs a fixed-layout Jacobian and rejects
+the ragged form. See [Irregular output grids](/examples/irregular-outputs).
+
 Two methods have no entry in that column, and the gap is deliberate. eFAST has
 one search curve per parameter, so there is nothing to resample: removing a
 point does not shrink the sample, it changes what the estimator computes. An

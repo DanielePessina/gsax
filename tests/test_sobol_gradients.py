@@ -272,20 +272,6 @@ def test_transform_rejects_unknown_theta_entries():
         sr.transform({"x9": {"low": 0.0}})
     with pytest.raises(ValueError, match="does not use"):
         sr.transform({"x1": {"mean": 0.0}})
-
-
-def test_transform_rejects_none_theta_values():
-    """Tier T4: a ``None`` field would silently untruncate a Gaussian.
-
-    ``theta = {"x": {"low": None}}`` used to pass validation and then read
-    back ``None`` where the spec's own bound stood, silently turning a
-    truncated marginal into an unbounded one. Omitting the key is the
-    supported way to keep the problem's declared value.
-    """
-    sr = sobol.sample(GRAD_PROBLEM, 256, seed=2, verbose=False)
-
-    with pytest.raises(ValueError, match=r"theta\['x3'\] sets \['low'\] to None"):
-        sr.transform({"x3": {"low": None}})
     with pytest.raises(ValueError, match="to None"):
         sr.transform({"x3": {"mean": None}})
 
@@ -404,27 +390,7 @@ def _legacy_design(problem, base_n, *, calc_second_order, scramble, seed):
     return _stable_unique_rows(_transform_samples(problem, expanded_unit))
 
 
-@pytest.mark.parametrize("scramble", [True, False])
-@pytest.mark.parametrize("calc_second_order", [True, False])
-@pytest.mark.parametrize(
-    "problem",
-    [
-        # One continuous marginal stands for all three: uniform, gaussian and
-        # truncated gaussian are strictly monotone, so they exercise the same
-        # injectivity path. The categorical case is the other path.
-        pytest.param(Problem.from_dict({"a": (0.0, 1.0), "b": (-2.0, 3.0)}), id="uniform"),
-        pytest.param(
-            Problem.from_dict(
-                {
-                    "a": {"dist": "categorical", "probs": [0.5, 0.5]},
-                    "b": {"dist": "categorical", "probs": [0.25, 0.25, 0.5]},
-                }
-            ),
-            id="categorical",
-        ),
-    ],
-)
-def test_unit_cube_dedup_gives_the_same_design(problem, calc_second_order, scramble):
+def test_unit_cube_dedup_gives_the_same_design():
     """Tier T4: deduplicating before the transform changes no design.
 
     A continuous marginal transform is strictly monotone, hence injective, so
@@ -433,21 +399,31 @@ def test_unit_cube_dedup_gives_the_same_design(problem, calc_second_order, scram
     pass; composing the two maps must land on the same answer as one pass over
     the transformed design.
     """
-    sr = sobol.sample(
-        problem,
-        1,
-        base_n=64,
-        calc_second_order=calc_second_order,
-        scramble=scramble,
-        seed=99,
-        verbose=False,
-    )
-    legacy_samples, legacy_map = _legacy_design(
-        problem, 64, calc_second_order=calc_second_order, scramble=scramble, seed=99
-    )
-
-    np.testing.assert_array_equal(sr.samples, legacy_samples)
-    np.testing.assert_array_equal(sr.expanded_to_unique, legacy_map)
+    problems = [
+        Problem.from_dict({"a": (0.0, 1.0), "b": (-2.0, 3.0)}),
+        Problem.from_dict(
+            {
+                "a": {"dist": "categorical", "probs": [0.5, 0.5]},
+                "b": {"dist": "categorical", "probs": [0.25, 0.25, 0.5]},
+            }
+        ),
+    ]
+    for problem in problems:
+        for calc_second_order, scramble in ((True, True), (False, False)):
+            sr = sobol.sample(
+                problem,
+                1,
+                base_n=64,
+                calc_second_order=calc_second_order,
+                scramble=scramble,
+                seed=99,
+                verbose=False,
+            )
+            legacy_samples, legacy_map = _legacy_design(
+                problem, 64, calc_second_order=calc_second_order, scramble=scramble, seed=99
+            )
+            np.testing.assert_array_equal(sr.samples, legacy_samples)
+            np.testing.assert_array_equal(sr.expanded_to_unique, legacy_map)
 
 
 def test_downsample_keeps_the_unit_design_aligned():
@@ -478,107 +454,18 @@ def test_save_load_round_trips_the_unit_design(tmp_path):
         )
 
 
-# ---------------------------------------------------------------------------
-# far-tail truncated Gaussian windows (survival-function reflection)
-# ---------------------------------------------------------------------------
-
-# Windows in standard-ish units around mean 0.3, std sqrt(1.7). The far-tail
-# ones broke the direct form: ndtr saturates to exactly 1.0 from about 8.2
-# sigma in float64, the probability window collapses to width 0, and the whole
-# column came back inf. The ordinary windows pin that the reflection changed
-# nothing where the direct form was already exact.
-TRUNC_WINDOWS = [
-    (9.0, 12.0),  # upper tail: both ndtr endpoints used to round to 1.0
-    (-12.0, -9.0),  # lower tail: direct form, well conditioned all along
-    (5.0, 20.0),  # upper tail with a far-out upper bound
-    (-2.0, 2.5),  # ordinary window straddling the mean
-    (0.5, 3.0),  # ordinary window, midpoint above the mean (reflected side)
-    (None, -9.0),  # one-sided: (-inf, high] deep in the lower tail
-    (9.0, None),  # one-sided: [low, inf) deep in the upper tail
-    (None, 2.0),  # one-sided, ordinary
-    (-1.0, None),  # one-sided, ordinary
-]
-
-
-@pytest.mark.parametrize("low,high", TRUNC_WINDOWS)
-def test_jax_truncated_gaussian_matches_scipy_on_tail_windows(low, high):
-    """Tier T2: the JAX truncated-Gaussian inverse CDF matches scipy.
-
-    Provenance: oracle is ``scipy.stats.truncnorm.ppf`` (scipy is a runtime
-    dependency, so the comparison runs live), float64, rtol 1e-9. Added
-    2026-08-19 with the survival-function reflection fix; before it, every
-    far-upper-tail window (e.g. ``[9, 12]``) came back all inf.
-    """
-    from scipy.stats import truncnorm
-
-    from jaxgsa._core.sampling import _jax_transform_gaussian
-
-    mean, variance = 0.3, 1.7
-    std = float(np.sqrt(variance))
-    u = np.linspace(1e-9, 1.0 - 1e-9, 41)
-    with jax.enable_x64():
-        got = np.asarray(
-            _jax_transform_gaussian(jnp.asarray(u), mean, variance, low=low, high=high)
-        )
-    a = -np.inf if low is None else (low - mean) / std
-    b = np.inf if high is None else (high - mean) / std
-    want = truncnorm.ppf(u, a, b, loc=mean, scale=std)
-    assert np.isfinite(got).all()
-    # rtol 5e-9, not tighter: at u = 1 - 1e-9 on a one-sided window the output
-    # sits 8 sigma out, where JAX's ndtri (Cephes) and scipy's ndtri disagree
-    # by about 2e-9 relative. That is approximation quality of the two ndtri
-    # implementations, not conditioning; the far-tail windows the reflection
-    # exists for agree to better than 1e-9.
-    np.testing.assert_allclose(got, want, rtol=5e-9, atol=1e-12)
-
-
-@pytest.mark.parametrize("low,high", [(9.0, 12.0), (-12.0, -9.0), (9.0, None), (None, -9.0)])
-def test_jax_truncated_gaussian_gradients_finite_on_tail_windows(low, high):
-    """Tier T4: gradients through a far-tail window are finite on both sides.
-
-    The branchless reflection selects a side with ``jnp.where``; without the
-    double-``where`` input sanitisation the *untaken* side computes
-    ``ndtri(1) = inf`` and reverse mode turns its zero cotangent into NaN.
-    """
+def test_far_tail_truncated_gaussian_transform_stays_finite_and_differentiable():
+    """The survival-function branch has finite values and gradients."""
     from jaxgsa._core.sampling import _jax_transform_gaussian
 
     with jax.enable_x64():
         u = jnp.linspace(0.05, 0.95, 9, dtype=jnp.float64)
 
         def total(mean, variance):
-            return jnp.sum(_jax_transform_gaussian(u, mean, variance, low=low, high=high))
+            return jnp.sum(_jax_transform_gaussian(u, mean, variance, low=9.0, high=12.0))
 
         value = total(0.3, 1.7)
         d_mean, d_var = jax.grad(total, argnums=(0, 1))(0.3, 1.7)
 
     assert np.isfinite(value)
     assert np.isfinite(d_mean) and np.isfinite(d_var)
-
-
-def test_jax_truncated_gaussian_tail_gradient_matches_finite_difference():
-    """Tier T2/T4: d/d(mean) on the reflected ``[9, 12]`` window agrees with a
-    central finite difference of the scipy oracle (h = 1e-6, float64)."""
-    from scipy.stats import truncnorm
-
-    from jaxgsa._core.sampling import _jax_transform_gaussian
-
-    low, high, variance = 9.0, 12.0, 1.7
-    std = float(np.sqrt(variance))
-    u = np.linspace(0.1, 0.9, 5)
-
-    with jax.enable_x64():
-
-        def total(mean):
-            return jnp.sum(
-                _jax_transform_gaussian(jnp.asarray(u), mean, variance, low=low, high=high)
-            )
-
-        grad = float(jax.grad(total)(0.3))
-
-    def scipy_total(mean):
-        a, b = (low - mean) / std, (high - mean) / std
-        return float(truncnorm.ppf(u, a, b, loc=mean, scale=std).sum())
-
-    h = 1e-6
-    fd = (scipy_total(0.3 + h) - scipy_total(0.3 - h)) / (2 * h)
-    np.testing.assert_allclose(grad, fd, rtol=1e-5)

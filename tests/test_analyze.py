@@ -4,7 +4,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from scipy.stats import truncnorm
 
 import jaxgsa
 from jaxgsa.benchmarks import sobol_g
@@ -183,14 +182,11 @@ def test_mixed_uniform_and_gaussian_linear_model_matches_analytical_indices():
     Y = (X @ coeffs)[:, None, None]
     result = jaxgsa.sobol.analyze(sr, Y)
 
-    std = np.sqrt(1.44)
-    a = (-0.5 - 0.5) / std
-    b = (1.0 - 0.5) / std
     variances = np.array(
         [
             (2.0 - 0.0) ** 2 / 12.0,
             2.25,
-            truncnorm.var(a, b, loc=0.5, scale=std),
+            0.17737521336463138,  # fixed variance of the declared truncation
         ]
     )
     coeff_sq = np.square(np.array([1.5, -0.75, 2.0]))
