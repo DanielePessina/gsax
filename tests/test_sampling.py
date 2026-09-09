@@ -1,10 +1,9 @@
 """Tests for the samplers: design layout, marginals, correlation, downsampling.
 
-Tier T4 (internal consistency) except where noted: most tests pin design
-invariants — uniqueness, nesting, determinism, bounds. The truncated-Gaussian
-moment checks compare live against ``scipy.stats.truncnorm`` (Tier T2), and
-the copula tests check recovered rank correlations against the declared
-targets (T4: the target is our own input).
+Tier T4 (internal consistency): most tests pin design invariants — uniqueness,
+nesting, determinism, bounds, and fixed distribution moments. The copula tests
+check recovered rank correlations against the declared targets (T4: the target
+is our own input).
 """
 
 import warnings
@@ -13,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from scipy.stats import truncnorm
 
 import jaxgsa
 from jaxgsa import JaxgsaWarning
@@ -302,10 +300,7 @@ def test_correlated_sampling_preserves_marginals():
     assert abs(np.var(X[:, 1]) - 2.25) < 0.08
     assert np.all(X[:, 2] >= -0.5)
     assert np.all(X[:, 2] <= 1.5)
-    std = np.sqrt(1.44)
-    a = (-0.5 - 0.5) / std
-    b = (1.5 - 0.5) / std
-    assert abs(np.var(X[:, 2]) - truncnorm.var(a, b, loc=0.5, scale=std)) < 0.03
+    assert abs(np.var(X[:, 2]) - 0.30340671702049193) < 0.03
 
 
 def test_correlated_monte_carlo_determinism_and_generator_seed():
